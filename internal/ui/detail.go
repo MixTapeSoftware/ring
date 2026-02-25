@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"myringa/internal/format"
 	"myringa/internal/incus"
 )
 
@@ -141,7 +144,7 @@ func toSnapshotRows(snaps []incus.SnapshotInfo) []table.Row {
 		}
 		size := "—"
 		if s.Size > 0 {
-			size = formatSize(s.Size)
+			size = format.Bytes(s.Size)
 		}
 		rows[i] = table.Row{
 			s.Name,
@@ -153,24 +156,12 @@ func toSnapshotRows(snaps []incus.SnapshotInfo) []table.Row {
 	return rows
 }
 
-// formatSize formats bytes to human-readable.
-func formatSize(b int64) string {
-	switch {
-	case b >= 1<<30:
-		return fmt.Sprintf("%.1fG", float64(b)/(1<<30))
-	case b >= 1<<20:
-		return fmt.Sprintf("%.0fM", float64(b)/(1<<20))
-	case b >= 1<<10:
-		return fmt.Sprintf("%.0fK", float64(b)/(1<<10))
-	default:
-		return fmt.Sprintf("%dB", b)
-	}
-}
-
 // fetchSnapshotsCmd fetches snapshots for an instance.
-func fetchSnapshotsCmd(conn incusClient, name string) tea.Cmd {
+func fetchSnapshotsCmd(c incus.Client, name string) tea.Cmd {
 	return func() tea.Msg {
-		snaps, err := incus.ListSnapshots(conn, name)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		snaps, err := c.ListSnapshots(ctx, name)
 		return snapshotsMsg{snapshots: snaps, err: err}
 	}
 }

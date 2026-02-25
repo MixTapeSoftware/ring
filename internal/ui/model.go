@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os/exec"
@@ -10,7 +11,6 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	incusclient "github.com/lxc/incus/v6/client"
 
 	"myringa/internal/incus"
 )
@@ -25,9 +25,6 @@ func (s *shellCmd) SetStdin(r io.Reader)    { s.cmd.Stdin = r }
 func (s *shellCmd) SetStdout(w io.Writer)   { s.cmd.Stdout = w }
 func (s *shellCmd) SetStderr(w io.Writer)   { s.cmd.Stderr = w }
 
-// incusClient is a type alias for readability.
-type incusClient = incusclient.InstanceServer
-
 // View modes
 type viewMode int
 
@@ -41,8 +38,8 @@ const (
 type tickMsg time.Time
 
 type connectDoneMsg struct {
-	conn incusClient
-	err  error
+	client incus.Client
+	err    error
 }
 
 type fetchDoneMsg struct {
@@ -74,7 +71,7 @@ type snapshotActionMsg struct {
 
 // Model is the BubbleTea model for the TUI.
 type Model struct {
-	conn         incusClient
+	client       incus.Client
 	rows         []incus.InstanceRow
 	cpuSnapshots map[string]incus.CPUSnapshot
 	lastUpdated  time.Time
@@ -82,6 +79,7 @@ type Model struct {
 	spinner      spinner.Model
 	loading      bool
 	err          error
+	errCountdown int // successful fetches remaining before auto-clearing err
 	width        int
 	height       int
 
@@ -163,29 +161,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case connectDoneMsg:
 		if msg.err != nil {
 			m.err = msg.err
+			m.errCountdown = 3
 			m.loading = false
 			return m, tickCmd()
 		}
-		m.conn = msg.conn
+		m.client = msg.client
 		m.err = nil
 		prev := copySnapshots(m.cpuSnapshots)
-		return m, fetchCmd(m.conn, prev, m.fetchGen)
+		return m, fetchCmd(m.client, prev, m.fetchGen)
 
 	case fetchDoneMsg:
 		if msg.err != nil {
 			m.err = msg.err
-			m.conn = nil
+			m.errCountdown = 3
+			m.client = nil
 			if msg.gen == m.fetchGen {
 				return m, tickCmd()
 			}
 			return m, nil
 		}
+		// Auto-clear stale errors after successful fetches
+		if m.err != nil && m.errCountdown > 0 {
+			m.errCountdown--
+			if m.errCountdown == 0 {
+				m.err = nil
+			}
+		}
+		// Preserve cursor by instance name across refreshes
+		selected := m.selectedName()
 		m.rows = msg.rows
 		m.cpuSnapshots = msg.snapshots
 		m.lastUpdated = time.Now()
 		m.loading = false
-		m.err = nil
 		m.table.SetRows(toTableRows(m.rows))
+		m.restoreCursor(selected)
 		// Only the active generation continues the ticker chain
 		if msg.gen == m.fetchGen {
 			return m, tickCmd()
@@ -193,30 +202,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		if m.conn == nil {
+		if m.client == nil {
 			return m, connectCmd()
 		}
 		prev := copySnapshots(m.cpuSnapshots)
-		return m, fetchCmd(m.conn, prev, m.fetchGen)
+		return m, fetchCmd(m.client, prev, m.fetchGen)
 
 	case actionDoneMsg:
 		m.actionPending = ""
 		if msg.err != nil {
 			m.err = fmt.Errorf("%s %s: %w", msg.action, msg.name, msg.err)
+			m.errCountdown = 3
 		} else {
 			m.err = nil
 		}
 		// Immediate refresh — bump generation to kill the old ticker chain
-		if m.conn != nil {
+		if m.client != nil {
 			m.fetchGen++
 			prev := copySnapshots(m.cpuSnapshots)
-			return m, fetchCmd(m.conn, prev, m.fetchGen)
+			return m, fetchCmd(m.client, prev, m.fetchGen)
 		}
 		return m, nil
 
 	case execDoneMsg:
 		if msg.err != nil {
 			m.err = fmt.Errorf("exec: %w", msg.err)
+			m.errCountdown = 3
 		}
 		return m, nil
 
@@ -224,6 +235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detailLoading = false
 		if msg.err != nil {
 			m.err = fmt.Errorf("snapshots: %w", msg.err)
+			m.errCountdown = 3
 			return m, nil
 		}
 		m.err = nil
@@ -234,12 +246,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapshotActionMsg:
 		if msg.err != nil {
 			m.err = fmt.Errorf("snapshot %s: %w", msg.action, msg.err)
+			m.errCountdown = 3
 		} else {
 			m.err = nil
 		}
 		// Refresh snapshot list
-		if m.view == viewDetail && m.conn != nil {
-			return m, fetchSnapshotsCmd(m.conn, m.detailName)
+		if m.view == viewDetail && m.client != nil {
+			return m, fetchSnapshotsCmd(m.client, m.detailName)
 		}
 		return m, nil
 
@@ -334,26 +347,26 @@ func (m Model) updateTableKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	case "s":
 		row, ok := m.selectedRow()
-		if !ok || m.conn == nil {
+		if !ok || m.client == nil {
 			return m, nil
 		}
 		if row.Status == "Running" {
 			m.actionPending = fmt.Sprintf("Stopping %s…", row.Name)
-			return m, stopInstanceCmd(m.conn, row.Name)
+			return m, stopInstanceCmd(m.client, row.Name)
 		}
 		if row.Status == "Stopped" {
 			m.actionPending = fmt.Sprintf("Starting %s…", row.Name)
-			return m, startInstanceCmd(m.conn, row.Name)
+			return m, startInstanceCmd(m.client, row.Name)
 		}
 		return m, nil
 
 	case "r":
 		row, ok := m.selectedRow()
-		if !ok || m.conn == nil || row.Status != "Running" {
+		if !ok || m.client == nil || row.Status != "Running" {
 			return m, nil
 		}
 		m.actionPending = fmt.Sprintf("Restarting %s…", row.Name)
-		return m, restartInstanceCmd(m.conn, row.Name)
+		return m, restartInstanceCmd(m.client, row.Name)
 
 	case "e":
 		row, ok := m.selectedRow()
@@ -364,7 +377,7 @@ func (m Model) updateTableKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	case "d", "enter":
 		row, ok := m.selectedRow()
-		if !ok || m.conn == nil || row.Status != "Running" {
+		if !ok || m.client == nil || row.Status != "Running" {
 			return m, nil
 		}
 		return m.enterDetail(row.Name)
@@ -406,7 +419,7 @@ func (m Model) updateConfirm(msg tea.KeyMsg) (Model, tea.Cmd) {
 		name := m.confirmName
 		m.clearConfirm()
 
-		if m.conn == nil {
+		if m.client == nil {
 			return m, nil
 		}
 
@@ -414,11 +427,11 @@ func (m Model) updateConfirm(msg tea.KeyMsg) (Model, tea.Cmd) {
 		case "delete-instance":
 			m.actionPending = fmt.Sprintf("Deleting %s…", name)
 			row, _ := m.findRow(name)
-			return m, deleteInstanceCmd(m.conn, name, row.Status == "Running")
+			return m, deleteInstanceCmd(m.client, name, row.Status == "Running")
 		case "restore-snapshot":
-			return m, restoreSnapshotCmd(m.conn, m.detailName, name)
+			return m, restoreSnapshotCmd(m.client, m.detailName, name)
 		case "delete-snapshot":
-			return m, deleteSnapshotCmd(m.conn, m.detailName, name)
+			return m, deleteSnapshotCmd(m.client, m.detailName, name)
 		}
 		return m, nil
 
@@ -441,10 +454,10 @@ func (m Model) updateSnapshotPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		m.clearSnapshotPrompt()
 
-		if name == "" || m.conn == nil {
+		if name == "" || m.client == nil {
 			return m, nil
 		}
-		return m, createSnapshotCmd(m.conn, target, name)
+		return m, createSnapshotCmd(m.client, target, name)
 
 	case "esc":
 		m.clearSnapshotPrompt()
@@ -474,7 +487,7 @@ func (m Model) enterDetail(name string) (Model, tea.Cmd) {
 	st.SetHeight(m.height - m.detailHeaderHeight())
 	m.snapshotTable = st
 
-	return m, fetchSnapshotsCmd(m.conn, name)
+	return m, fetchSnapshotsCmd(m.client, name)
 }
 
 // Helpers
@@ -492,12 +505,37 @@ func (m *Model) clearSnapshotPrompt() {
 	m.snapshotInput.SetValue("")
 }
 
+// selectedRow returns the instance row at the current cursor position.
 func (m Model) selectedRow() (incus.InstanceRow, bool) {
 	idx := m.table.Cursor()
 	if idx < 0 || idx >= len(m.rows) {
 		return incus.InstanceRow{}, false
 	}
 	return m.rows[idx], true
+}
+
+// selectedName returns the name of the currently selected instance, or "".
+func (m Model) selectedName() string {
+	row, ok := m.selectedRow()
+	if !ok {
+		return ""
+	}
+	return row.Name
+}
+
+// restoreCursor moves the table cursor to the row matching name.
+// If name is empty or not found, the cursor stays at its current position
+// (clamped to the new row count by the table widget).
+func (m *Model) restoreCursor(name string) {
+	if name == "" {
+		return
+	}
+	for i, r := range m.rows {
+		if r.Name == name {
+			m.table.SetCursor(i)
+			return
+		}
+	}
 }
 
 func (m Model) findRow(name string) (incus.InstanceRow, bool) {
@@ -588,14 +626,16 @@ func statusRune(status string) string {
 
 func connectCmd() tea.Cmd {
 	return func() tea.Msg {
-		conn, err := incus.Connect()
-		return connectDoneMsg{conn: conn, err: err}
+		client, err := incus.Connect()
+		return connectDoneMsg{client: client, err: err}
 	}
 }
 
-func fetchCmd(conn incusClient, prev map[string]incus.CPUSnapshot, gen int) tea.Cmd {
+func fetchCmd(c incus.Client, prev map[string]incus.CPUSnapshot, gen int) tea.Cmd {
 	return func() tea.Msg {
-		rows, snaps, err := incus.FetchInstances(conn, prev)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		rows, snaps, err := c.FetchInstances(ctx, prev)
 		return fetchDoneMsg{rows: rows, snapshots: snaps, err: err, gen: gen}
 	}
 }
@@ -606,63 +646,83 @@ func tickCmd() tea.Cmd {
 	})
 }
 
-func startInstanceCmd(conn incusClient, name string) tea.Cmd {
+func startInstanceCmd(c incus.Client, name string) tea.Cmd {
 	return func() tea.Msg {
-		err := incus.StartInstance(conn, name)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		err := c.StartInstance(ctx, name)
 		return actionDoneMsg{action: "start", name: name, err: err}
 	}
 }
 
-func stopInstanceCmd(conn incusClient, name string) tea.Cmd {
+func stopInstanceCmd(c incus.Client, name string) tea.Cmd {
 	return func() tea.Msg {
-		err := incus.StopInstance(conn, name)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		err := c.StopInstance(ctx, name)
 		return actionDoneMsg{action: "stop", name: name, err: err}
 	}
 }
 
-func restartInstanceCmd(conn incusClient, name string) tea.Cmd {
+func restartInstanceCmd(c incus.Client, name string) tea.Cmd {
 	return func() tea.Msg {
-		err := incus.RestartInstance(conn, name)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		err := c.RestartInstance(ctx, name)
 		return actionDoneMsg{action: "restart", name: name, err: err}
 	}
 }
 
-func deleteInstanceCmd(conn incusClient, name string, isRunning bool) tea.Cmd {
+func deleteInstanceCmd(c incus.Client, name string, isRunning bool) tea.Cmd {
 	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
 		if isRunning {
-			if err := incus.StopInstance(conn, name); err != nil {
+			if err := c.StopInstance(ctx, name); err != nil {
 				return actionDoneMsg{action: "delete", name: name, err: fmt.Errorf("stop before delete: %w", err)}
 			}
 		}
-		err := incus.DeleteInstance(conn, name)
+		err := c.DeleteInstance(ctx, name)
 		return actionDoneMsg{action: "delete", name: name, err: err}
 	}
 }
 
+// BuildExecCmd constructs the exec.Cmd for shelling into an instance.
+// Extracted for testability.
+func BuildExecCmd(name string) *exec.Cmd {
+	return exec.Command("incus", "exec", name, "--", "sh")
+}
+
 func execCmd(name string) tea.Cmd {
-	c := &shellCmd{cmd: exec.Command("incus", "exec", name, "--", "bash")}
+	c := &shellCmd{cmd: BuildExecCmd(name)}
 	return tea.Exec(c, func(err error) tea.Msg {
 		return execDoneMsg{err: err}
 	})
 }
 
-func createSnapshotCmd(conn incusClient, instanceName, snapshotName string) tea.Cmd {
+func createSnapshotCmd(c incus.Client, instanceName, snapshotName string) tea.Cmd {
 	return func() tea.Msg {
-		err := incus.CreateSnapshot(conn, instanceName, snapshotName)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := c.CreateSnapshot(ctx, instanceName, snapshotName)
 		return snapshotActionMsg{action: "create", err: err}
 	}
 }
 
-func restoreSnapshotCmd(conn incusClient, instanceName, snapshotName string) tea.Cmd {
+func restoreSnapshotCmd(c incus.Client, instanceName, snapshotName string) tea.Cmd {
 	return func() tea.Msg {
-		err := incus.RestoreSnapshot(conn, instanceName, snapshotName)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		err := c.RestoreSnapshot(ctx, instanceName, snapshotName)
 		return snapshotActionMsg{action: "restore", err: err}
 	}
 }
 
-func deleteSnapshotCmd(conn incusClient, instanceName, snapshotName string) tea.Cmd {
+func deleteSnapshotCmd(c incus.Client, instanceName, snapshotName string) tea.Cmd {
 	return func() tea.Msg {
-		err := incus.DeleteSnapshot(conn, instanceName, snapshotName)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := c.DeleteSnapshot(ctx, instanceName, snapshotName)
 		return snapshotActionMsg{action: "delete", err: err}
 	}
 }
