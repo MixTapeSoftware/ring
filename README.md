@@ -1,5 +1,22 @@
-# Myringa - Work in Progress
+# myringa
 
-An TUI to facilitate secure local development with [Incus](https://linuxcontainers.org/incus)
+A terminal dashboard for [Incus](https://linuxcontainers.org/incus/) containers and VMs.
 
-**Vibe Coded with Claude Sonnet/Opus 4.6**
+## Install
+
+Requires Go 1.25+ and a running Incus daemon.
+
+```sh
+go build -o myringa .
+```
+
+## Usage
+
+```sh
+./myringa
+```
+
+| Key | Action |
+|-----|--------|
+| j/k | Scroll |
+| q | Quit |
