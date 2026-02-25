@@ -34,8 +34,8 @@ type Model struct {
 	spinner      spinner.Model
 	loading      bool
 	err          error
-	width        int
-	height       int
+	width  int
+	height int
 }
 
 // NewModel creates the initial model.
@@ -78,7 +78,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.table.SetColumns(tableColumns(m.width))
+		m.table.SetColumns(m.tableColumns())
 		m.table.SetHeight(m.height - headerHeight(m.err != nil))
 		return m, nil
 
@@ -109,7 +109,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastUpdated = time.Now()
 		m.loading = false
 		m.err = nil
-		m.table.SetRows(toTableRows(msg.rows))
+		m.table.SetRows(m.toTableRows())
 		return m, tickCmd()
 
 	case tickMsg:
@@ -129,7 +129,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	var s string
 
-	// Title bar: "myringa  12 instances  15:04:05"
+	// Title bar
 	title := TitleStyle.Render("myringa")
 	var meta string
 	if len(m.rows) > 0 {
@@ -199,15 +199,14 @@ func copySnapshots(m map[string]incus.CPUSnapshot) map[string]incus.CPUSnapshot 
 	return c
 }
 
-func tableColumns(width int) []table.Column {
+func (m Model) tableColumns() []table.Column {
 	const (
 		nameW = 32
 		cpuW  = 8
 		memW  = 12
 		diskW = 8
 	)
-	fixed := nameW + cpuW + memW + diskW
-	ipWidth := width - fixed
+	ipWidth := m.width - (nameW + cpuW + memW + diskW)
 	if ipWidth < 16 {
 		ipWidth = 16
 	}
@@ -221,17 +220,18 @@ func tableColumns(width int) []table.Column {
 	}
 }
 
-func toTableRows(rows []incus.InstanceRow) []table.Row {
-	trs := make([]table.Row, len(rows))
-	for i, r := range rows {
+func (m Model) toTableRows() []table.Row {
+	trs := make([]table.Row, len(m.rows))
+	for i, r := range m.rows {
 		name := fmt.Sprintf("%s %s  %s", statusRune(r.Status), r.Name, r.Type)
-		trs[i] = table.Row{
+		row := []string{
 			name,
 			r.CPU,
 			r.Memory,
 			r.Disk,
 			r.IPv4,
 		}
+		trs[i] = row
 	}
 	return trs
 }

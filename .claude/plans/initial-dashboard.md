@@ -1,4 +1,4 @@
-# Plan: tincus — Incus TUI Dashboard
+# Plan: myringa — Incus TUI Dashboard
 
 ## Context
 A read-only terminal dashboard that shows all Incus containers and VMs with live stats. Polls every 2 seconds. Built with BubbleTea in Go. `/workspace` is empty — greenfield.
@@ -19,7 +19,7 @@ A read-only terminal dashboard that shows all Incus containers and VMs with live
         └── styles.go   # Lipgloss vars
 ```
 
-Module: `tincus`
+Module: `myringa`
 
 ---
 
@@ -37,7 +37,7 @@ github.com/lxc/incus/v6
 ## Step 1: Initialize
 
 ```bash
-go mod init tincus
+go mod init myringa
 go get github.com/charmbracelet/bubbletea \
        github.com/charmbracelet/bubbles \
        github.com/charmbracelet/lipgloss \
@@ -167,7 +167,7 @@ default:                 m.table, cmd = m.table.Update(msg); return m, cmd  // t
 ### View()
 
 ```
-[Title: "tincus"]
+[Title: "myringa"]
 [ErrorStyle banner if err != nil]
 [Spinner "Connecting..." if loading, else table.View()]
 ["Last updated: HH:MM:SS"  |  "j/k scroll  r refresh  q quit"]
@@ -205,8 +205,8 @@ func main() {
 
 ```bash
 go mod tidy
-go build -o tincus .
-./tincus
+go build -o myringa .
+./myringa
 ```
 
 Needs access to Incus Unix socket. Run as user in `incus-admin` group or with `sudo`.
@@ -215,7 +215,7 @@ Needs access to Incus Unix socket. Run as user in `incus-admin` group or with `s
 
 ## Verification
 
-1. `./tincus` — spinner briefly, then table of instances
+1. `./myringa` — spinner briefly, then table of instances
 2. Start/stop an instance — table updates within ~2s
 3. CPU shows "—" on first poll, values on second
 4. Press `r` — immediate refresh
