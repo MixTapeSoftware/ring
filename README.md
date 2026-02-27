@@ -8,6 +8,18 @@ A terminal dashboard and provisioning CLI for [Incus](https://linuxcontainers.or
 - **`launch`** — one command to create a fully configured dev container: user account, sudo, workspace mount, proxy, Docker, dev tools
 - **`images build`** — build custom myringa images locally from upstream Alpine or Ubuntu
 
+## Why
+
+Incus is a powerful system container and VM manager, but its surface area is large. Most of that surface area isn't relevant if your goal is local development — you just want isolated environments that feel like real machines, start fast, and stay out of your way.
+
+myringa narrows Incus down to that use case:
+
+- **One command to launch a dev container.** No fiddling with profiles, cloud-init, idmaps, or bind mounts. `myringa launch mydev` handles all of it.
+- **Opinionated images.** Custom Alpine and Ubuntu images with zsh, mise, and optional dev tools baked in — built locally, no registry required.
+- **A TUI that shows what matters.** Incus has a CLI but no live dashboard. myringa gives you a table of your containers with CPU, memory, disk, and IP at a glance, plus controls for the actions you actually use day-to-day.
+
+If you need the full power of Incus — clustering, storage pools, network ACLs, VMs — use `incus` directly. myringa is for the common case.
+
 ## Requirements
 
 - Go 1.22+
