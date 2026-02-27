@@ -54,9 +54,9 @@ func TestToTableRows(t *testing.T) {
 }
 
 func TestBuildExecCmd(t *testing.T) {
-	cmd := BuildExecCmd("my-instance")
+	cmd := BuildExecCmd("my-instance", "alice")
 	args := cmd.Args
-	want := []string{"incus", "exec", "my-instance", "--", "sh"}
+	want := []string{"incus", "exec", "my-instance", "--", "su", "-", "alice", "-s", "/bin/zsh"}
 	if len(args) != len(want) {
 		t.Fatalf("got args %v, want %v", args, want)
 	}
@@ -68,14 +68,14 @@ func TestBuildExecCmd(t *testing.T) {
 }
 
 func TestSelectedName_Empty(t *testing.T) {
-	m := NewModel()
+	m := NewModel("testuser")
 	if name := m.selectedName(); name != "" {
 		t.Errorf("selectedName() on empty model = %q, want empty", name)
 	}
 }
 
 func TestRestoreCursor(t *testing.T) {
-	m := NewModel()
+	m := NewModel("testuser")
 	m.width = 120
 	m.table.SetColumns(m.tableColumns())
 	m.table.SetHeight(10)
@@ -106,7 +106,7 @@ func TestRestoreCursor(t *testing.T) {
 }
 
 func TestFindRow(t *testing.T) {
-	m := NewModel()
+	m := NewModel("testuser")
 	m.rows = []incus.InstanceRow{
 		{Name: "alpha", Status: "Running"},
 		{Name: "bravo", Status: "Stopped"},

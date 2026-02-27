@@ -15,6 +15,7 @@ import (
 	"myringa/internal/incus"
 )
 
+
 // shellCmd wraps exec.Cmd to satisfy tea.ExecCommand.
 type shellCmd struct {
 	cmd *exec.Cmd
@@ -72,6 +73,7 @@ type snapshotActionMsg struct {
 // Model is the BubbleTea model for the TUI.
 type Model struct {
 	client       incus.Client
+	username     string // host username; used to su into containers as the right user
 	rows         []incus.InstanceRow
 	cpuSnapshots map[string]incus.CPUSnapshot
 	lastUpdated  time.Time
@@ -107,8 +109,9 @@ type Model struct {
 	snapshotTable   table.Model
 }
 
-// NewModel creates the initial model.
-func NewModel() Model {
+// NewModel creates the initial model. username is the host user who will be
+// su'd into containers when pressing 'e'.
+func NewModel(username string) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 
@@ -125,6 +128,7 @@ func NewModel() Model {
 	si.CharLimit = 64
 
 	return Model{
+		username:      username,
 		cpuSnapshots:  make(map[string]incus.CPUSnapshot),
 		table:         t,
 		spinner:       s,
@@ -373,7 +377,7 @@ func (m Model) updateTableKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		return m, execCmd(row.Name)
+		return m, execCmd(row.Name, m.username)
 
 	case "d", "enter":
 		row, ok := m.selectedRow()
@@ -687,14 +691,15 @@ func deleteInstanceCmd(c incus.Client, name string, isRunning bool) tea.Cmd {
 	}
 }
 
-// BuildExecCmd constructs the exec.Cmd for shelling into an instance.
-// Extracted for testability.
-func BuildExecCmd(name string) *exec.Cmd {
-	return exec.Command("incus", "exec", name, "--", "sh")
+// BuildExecCmd constructs the exec.Cmd for shelling into an instance as the
+// given user. Uses `su -` with an explicit zsh so the user gets a proper login
+// shell with their environment, rather than a root shell in the default shell.
+func BuildExecCmd(name, username string) *exec.Cmd {
+	return exec.Command("incus", "exec", name, "--", "su", "-", username, "-s", "/bin/zsh")
 }
 
-func execCmd(name string) tea.Cmd {
-	c := &shellCmd{cmd: BuildExecCmd(name)}
+func execCmd(name, username string) tea.Cmd {
+	c := &shellCmd{cmd: BuildExecCmd(name, username)}
 	return tea.Exec(c, func(err error) tea.Msg {
 		return execDoneMsg{err: err}
 	})

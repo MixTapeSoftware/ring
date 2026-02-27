@@ -40,7 +40,7 @@ Displays a live table of all Incus instances. Refreshes every 2 seconds.
 | `j` / `k` or arrow keys | Scroll down / up |
 | `s` | Start (if stopped) or stop (if running) |
 | `r` | Restart (running instances only) |
-| `e` | Open a shell (`incus exec … -- sh`) |
+| `e` | Open a shell as your host user (`su - $USER` inside the container) |
 | `d` or `Enter` | Open detail view (running instances only) |
 | `S` | Create a snapshot (prompts for name) |
 | `x` | Delete instance (confirms first) |

@@ -141,7 +141,7 @@ func (m *mockClient) ExecInstance(_ context.Context, _ string, _ []string) ([]by
 // --- Test Helpers ---
 
 func testModel(mc *mockClient) Model {
-	m := NewModel()
+	m := NewModel("testuser")
 	m.client = mc
 	m.loading = false
 	m.width = 120
@@ -185,7 +185,7 @@ func TestConnectDoneMsg_Success(t *testing.T) {
 	mc := &mockClient{
 		instances: []incus.InstanceRow{{Name: "test-1", Status: "Running"}},
 	}
-	m := NewModel()
+	m := NewModel("testuser")
 	m.width = 120
 	m.height = 40
 	m.table.SetColumns(m.tableColumns())
@@ -213,7 +213,7 @@ func TestConnectDoneMsg_Success(t *testing.T) {
 }
 
 func TestConnectDoneMsg_Error(t *testing.T) {
-	m := NewModel()
+	m := NewModel("testuser")
 
 	result, cmd := m.Update(connectDoneMsg{err: errors.New("socket not found")})
 	m = result.(Model)
@@ -463,7 +463,7 @@ func TestKeyR_IgnoresStoppedInstance(t *testing.T) {
 }
 
 func TestKeyS_NoClient(t *testing.T) {
-	m := NewModel()
+	m := NewModel("testuser")
 	m.width = 120
 	m.height = 40
 	m.table.SetColumns(m.tableColumns())
@@ -656,7 +656,7 @@ func TestCursorPreservation_AfterRowRemoved(t *testing.T) {
 // --- Tick → Reconnect When Client is Nil ---
 
 func TestTickMsg_ReconnectsWhenClientNil(t *testing.T) {
-	m := NewModel()
+	m := NewModel("testuser")
 	m.client = nil
 
 	result, cmd := m.Update(tickMsg(time.Now()))
@@ -675,7 +675,7 @@ func TestTickMsg_ReconnectsWhenClientNil(t *testing.T) {
 // --- Global Quit ---
 
 func TestCtrlC_Quits(t *testing.T) {
-	m := NewModel()
+	m := NewModel("testuser")
 
 	result, cmd := m.Update(ctrlKey("c"))
 	_ = result.(Model)

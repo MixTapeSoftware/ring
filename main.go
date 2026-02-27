@@ -45,7 +45,12 @@ func main() {
 }
 
 func runTUI() {
-	p := tea.NewProgram(ui.NewModel(), tea.WithAltScreen())
+	u, err := user.Current()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot determine current user:", err)
+		os.Exit(1)
+	}
+	p := tea.NewProgram(ui.NewModel(u.Username), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
