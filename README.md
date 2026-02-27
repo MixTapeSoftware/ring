@@ -4,6 +4,8 @@ Built with [Claude Code](https://claude.ai/claude-code) and Sonnet 4.6 + Opus 4.
 
 A terminal dashboard and provisioning CLI for [Incus](https://linuxcontainers.org/incus/) containers.
 
+[![asciicast](https://asciinema.org/a/JHxpIO9BzBt7iZDS.svg)](https://asciinema.org/a/JHxpIO9BzBt7iZDS)
+
 - **TUI dashboard** — live table of containers and VMs: CPU (% of allocated capacity), memory, state
 - **`launch`** — one command to create a fully configured dev container: user account, sudo, workspace mount, proxy, Docker, dev tools
 - **`images build`** — build custom myringa images locally from upstream Alpine or Ubuntu
