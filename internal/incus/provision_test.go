@@ -8,7 +8,7 @@ import (
 
 func TestParseProfileYAML_BaseProfile(t *testing.T) {
 	data := `
-description: Base myringa dev environment
+description: Base ring dev environment
 config:
   limits.cpu: "4"
   limits.memory: 4GiB
@@ -24,8 +24,8 @@ devices:
 		t.Fatalf("parseProfileYAML failed: %v", err)
 	}
 
-	if out.Description != "Base myringa dev environment" {
-		t.Errorf("description: got %q, want %q", out.Description, "Base myringa dev environment")
+	if out.Description != "Base ring dev environment" {
+		t.Errorf("description: got %q, want %q", out.Description, "Base ring dev environment")
 	}
 
 	if out.Config["limits.cpu"] != "4" {

@@ -13,7 +13,7 @@ import (
 	"github.com/lxc/incus/v6/shared/api"
 	"gopkg.in/yaml.v2"
 
-	"myringa/internal/format"
+	"ring/internal/format"
 )
 
 // InstanceRow holds formatted data for a single instance.

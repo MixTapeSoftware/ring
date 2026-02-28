@@ -14,10 +14,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lxc/incus/v6/shared/api"
 
-	"myringa/internal/images"
-	"myringa/internal/incus"
-	"myringa/internal/provision"
-	"myringa/internal/ui"
+	"ring/internal/images"
+	"ring/internal/incus"
+	"ring/internal/provision"
+	"ring/internal/ui"
 )
 
 type command int
@@ -39,7 +39,7 @@ func main() {
 	case cmdImagesBuild:
 		runImagesBuild(args)
 	case cmdUnknown:
-		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\nUsage:\n  myringa                    TUI dashboard\n  myringa launch <name>       create a dev container\n  myringa images build <distro>  build a custom image\n", args[0])
+		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\nUsage:\n  ring TUI dashboard\n  ring launch (or \"l\") <name>       create a dev container\n  ring images build <distro>  build a custom image\n", args[0])
 		os.Exit(1)
 	}
 }
@@ -60,7 +60,7 @@ func runTUI() {
 func runLaunch(args []string) {
 	opts, err := parseLaunchFlags(args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "myringa launch:", err)
+		fmt.Fprintln(os.Stderr, "ring launch:", err)
 		fmt.Fprint(os.Stderr, launchUsage)
 		os.Exit(1)
 	}
@@ -68,7 +68,7 @@ func runLaunch(args []string) {
 	if opts.DryRun {
 		plan, err := provision.DryRun(context.Background(), opts)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "myringa launch:", err)
+			fmt.Fprintln(os.Stderr, "ring launch:", err)
 			os.Exit(1)
 		}
 		fmt.Print(plan)
@@ -87,7 +87,7 @@ func runLaunch(args []string) {
 	client := &incusProvisionAdapter{c: c}
 	if err := launchWithAutoBuild(context.Background(), c, client, opts, spin); err != nil {
 		spin.Stop()
-		fmt.Fprintln(os.Stderr, "myringa launch:", err)
+		fmt.Fprintln(os.Stderr, "ring launch:", err)
 		os.Exit(1)
 	}
 
@@ -102,6 +102,8 @@ func parseArgs(args []string) (command, []string) {
 	}
 	switch args[1] {
 	case "launch":
+		return cmdLaunch, args[2:]
+	case "l":
 		return cmdLaunch, args[2:]
 	case "images":
 		if len(args) >= 3 && args[2] == "build" {
@@ -123,9 +125,9 @@ func parseLaunchFlags(args []string) (provision.LaunchOpts, error) {
 	fs := flag.NewFlagSet("launch", flag.ContinueOnError)
 
 	distro := fs.String("distro", "alpine", "OS distro: alpine, ubuntu")
-	docker := fs.Bool("docker", false, "Enable Docker (implies --dev-tools)")
-	devTools := fs.Bool("dev-tools", false, "Use dev image variant (oh-my-zsh, fzf, bat, Docker packages)")
-	noSudo := fs.Bool("no-sudo", false, "Disable passwordless sudo")
+	docker := fs.Bool("docker", true, "Enable Docker (implies --dev-tools)")
+	devTools := fs.Bool("dev-tools", true, "Use dev image variant (oh-my-zsh, fzf, bat, Docker packages)")
+	enableSudo := fs.Bool("enable-sudo", false, "Enable passwordless sudo")
 	proxy := fs.String("proxy", "", "HTTP proxy host:port")
 	workspace := fs.String("workspace", "", "Host directory to mount (default: cwd)")
 	mountPath := fs.String("mount-path", "/workspace", "Container mount point")
@@ -168,7 +170,7 @@ func parseLaunchFlags(args []string) (provision.LaunchOpts, error) {
 		Distro:    *distro,
 		Docker:    *docker,
 		DevTools:  *devTools,
-		Sudo:      !*noSudo,
+		Sudo:      *enableSudo,
 		Proxy:     *proxy,
 		Workspace: ws,
 		MountPath: *mountPath,
@@ -180,7 +182,7 @@ func parseLaunchFlags(args []string) (provision.LaunchOpts, error) {
 }
 
 const launchUsage = `
-Usage: myringa launch [flags] <name>
+Usage: ring launch [flags] <name>
 
   --distro string       OS distro: alpine, ubuntu (default "alpine")
   --docker              Enable Docker (implies --dev-tools)
@@ -192,10 +194,10 @@ Usage: myringa launch [flags] <name>
   --dry-run             Show what would be done
 
 Examples:
-  myringa launch mydev
-  myringa launch mydev --distro ubuntu
-  myringa launch mydev --docker --dev-tools
-  myringa launch mydev --dry-run
+  ring launch mydev
+  ring launch mydev --distro ubuntu
+  ring launch mydev --docker --dev-tools
+  ring launch mydev --dry-run
 `
 
 // launchWithAutoBuild calls provision.Launch and, if the required image is missing,
@@ -228,12 +230,12 @@ func runImagesBuild(args []string) {
 	tag := fs.String("tag", "latest", "Image tag")
 
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(os.Stderr, "myringa images build:", err)
+		fmt.Fprintln(os.Stderr, "ring images build:", err)
 		os.Exit(1)
 	}
 	if fs.NArg() == 0 {
-		fmt.Fprintln(os.Stderr, "myringa images build: distro is required (alpine or ubuntu)")
-		fmt.Fprintln(os.Stderr, "\nUsage: myringa images build <distro> [--dev] [--tag <tag>]")
+		fmt.Fprintln(os.Stderr, "ring images build: distro is required (alpine or ubuntu)")
+		fmt.Fprintln(os.Stderr, "\nUsage: ring images build <distro> [--dev] [--tag <tag>]")
 		os.Exit(1)
 	}
 
@@ -250,7 +252,7 @@ func runImagesBuild(args []string) {
 	}
 
 	if err := images.Build(context.Background(), c, opts, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "myringa images build:", err)
+		fmt.Fprintln(os.Stderr, "ring images build:", err)
 		os.Exit(1)
 	}
 }

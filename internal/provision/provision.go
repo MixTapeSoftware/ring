@@ -101,16 +101,16 @@ func (o LaunchOpts) Validate() error {
 // ImageAlias resolves the local Incus image alias.
 func ImageAlias(distro string, devTools bool) string {
 	if devTools {
-		return fmt.Sprintf("myringa/%s-dev:latest", distro)
+		return fmt.Sprintf("ring/%s-dev:latest", distro)
 	}
-	return fmt.Sprintf("myringa/%s:latest", distro)
+	return fmt.Sprintf("ring/%s:latest", distro)
 }
 
 // BuildProfiles returns the ordered profile list for a new instance.
 func BuildProfiles(docker bool) []string {
-	profiles := []string{"default", "myringa-base"}
+	profiles := []string{"default", "ring-base"}
 	if docker {
-		profiles = append(profiles, "myringa-docker")
+		profiles = append(profiles, "ring-docker")
 	}
 	return profiles
 }
@@ -124,15 +124,15 @@ func WorkspaceDevice(hostPath, containerPath string) map[string]string {
 	}
 }
 
-// SyncProfiles ensures both myringa static profiles exist in the Incus daemon.
+// SyncProfiles ensures both ring static profiles exist in the Incus daemon.
 // Profiles are embedded from embed/profiles/. Existing profiles are skipped.
 func SyncProfiles(ctx context.Context, c Client) error {
 	profiles := []struct {
 		name string
 		path string
 	}{
-		{"myringa-base", "embed/profiles/myringa-base.yaml"},
-		{"myringa-docker", "embed/profiles/myringa-docker.yaml"},
+		{"ring-base", "embed/profiles/ring-base.yaml"},
+		{"ring-docker", "embed/profiles/ring-docker.yaml"},
 	}
 
 	for _, p := range profiles {

@@ -1,4 +1,4 @@
-module myringa
+module ring
 
 go 1.25.7
 

@@ -43,8 +43,8 @@ func TestParseLaunchFlags_Defaults(t *testing.T) {
 	if opts.Distro != "alpine" {
 		t.Errorf("default distro: got %q, want alpine", opts.Distro)
 	}
-	if !opts.Sudo {
-		t.Error("default sudo: should be true")
+	if opts.Sudo {
+		t.Error("default sudo: should be false")
 	}
 	if opts.MountPath != "/workspace" {
 		t.Errorf("default mount path: got %q, want /workspace", opts.MountPath)
@@ -75,12 +75,12 @@ func TestParseLaunchFlags_DockerImpliesDevTools(t *testing.T) {
 }
 
 func TestParseLaunchFlags_NoSudo(t *testing.T) {
-	opts, err := parseLaunchFlags([]string{"mydev", "--no-sudo"})
+	opts, err := parseLaunchFlags([]string{"mydev", "--enable-sudo"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if opts.Sudo {
-		t.Error("--no-sudo: Sudo should be false")
+	if !opts.Sudo {
+		t.Error("--enable-sudo: Sudo should be true")
 	}
 }
 

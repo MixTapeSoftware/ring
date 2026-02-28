@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"myringa/internal/incus"
+	"ring/internal/incus"
 )
 
 
@@ -304,7 +304,7 @@ func (m Model) viewTableScreen() string {
 	var s string
 
 	// Title bar
-	title := TitleStyle.Render("myringa")
+	title := TitleStyle.Render("ring")
 	var meta string
 	if len(m.rows) > 0 {
 		meta += DimStyle.Render(fmt.Sprintf("  %d instances", len(m.rows)))

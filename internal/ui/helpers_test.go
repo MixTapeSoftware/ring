@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"myringa/internal/incus"
+	"ring/internal/incus"
 )
 
 func TestStatusRune(t *testing.T) {

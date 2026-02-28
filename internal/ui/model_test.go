@@ -10,7 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lxc/incus/v6/shared/api"
 
-	"myringa/internal/incus"
+	"ring/internal/incus"
 )
 
 // --- Mock Client ---

@@ -28,7 +28,7 @@ type BuildClient interface {
 	DeleteInstance(ctx context.Context, name string) error
 }
 
-// BuildOpts holds parameters for building a myringa custom image.
+// BuildOpts holds parameters for building a ring custom image.
 type BuildOpts struct {
 	Distro   string // "alpine" or "ubuntu"
 	DevTools bool   // build the -dev variant
@@ -76,9 +76,9 @@ func UpstreamLabel(distro string) string {
 // TargetAlias returns the local image alias that Build() will publish.
 func TargetAlias(distro string, devTools bool, tag string) string {
 	if devTools {
-		return fmt.Sprintf("myringa/%s-dev:%s", distro, tag)
+		return fmt.Sprintf("ring/%s-dev:%s", distro, tag)
 	}
-	return fmt.Sprintf("myringa/%s:%s", distro, tag)
+	return fmt.Sprintf("ring/%s:%s", distro, tag)
 }
 
 // LoadPackages reads the embedded package list for the given distro.
@@ -273,5 +273,5 @@ func builderName() string {
 	for i := range b {
 		b[i] = chars[rand.Intn(len(chars))]
 	}
-	return "myringa-builder-" + string(b)
+	return "ring-builder-" + string(b)
 }

@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"myringa/internal/provision"
+	"ring/internal/provision"
 )
 
 // ── Mock client ────────────────────────────────────────────────────────────────
@@ -369,8 +369,8 @@ func TestImageAlias_NoDevTools(t *testing.T) {
 		distro string
 		want   string
 	}{
-		{"alpine", "myringa/alpine:latest"},
-		{"ubuntu", "myringa/ubuntu:latest"},
+		{"alpine", "ring/alpine:latest"},
+		{"ubuntu", "ring/ubuntu:latest"},
 	}
 	for _, c := range cases {
 		got := provision.ImageAlias(c.distro, false)
@@ -385,8 +385,8 @@ func TestImageAlias_WithDevTools(t *testing.T) {
 		distro string
 		want   string
 	}{
-		{"alpine", "myringa/alpine-dev:latest"},
-		{"ubuntu", "myringa/ubuntu-dev:latest"},
+		{"alpine", "ring/alpine-dev:latest"},
+		{"ubuntu", "ring/ubuntu-dev:latest"},
 	}
 	for _, c := range cases {
 		got := provision.ImageAlias(c.distro, true)
@@ -406,18 +406,18 @@ func TestSyncProfiles_CreatesIfMissing(t *testing.T) {
 		t.Fatalf("SyncProfiles failed: %v", err)
 	}
 
-	if !mc.profiles["myringa-base"] {
-		t.Error("myringa-base profile was not created")
+	if !mc.profiles["ring-base"] {
+		t.Error("ring-base profile was not created")
 	}
-	if !mc.profiles["myringa-docker"] {
-		t.Error("myringa-docker profile was not created")
+	if !mc.profiles["ring-docker"] {
+		t.Error("ring-docker profile was not created")
 	}
 }
 
 func TestSyncProfiles_SkipsExisting(t *testing.T) {
 	mc := newMockClient()
-	mc.profiles["myringa-base"] = true
-	mc.profiles["myringa-docker"] = true
+	mc.profiles["ring-base"] = true
+	mc.profiles["ring-docker"] = true
 
 	// Track create calls by making createProfile fail if called
 	mc.createProfileErr = errors.New("should not be called")
@@ -431,8 +431,8 @@ func TestSyncProfiles_SkipsExisting(t *testing.T) {
 
 func TestSyncProfiles_PartiallyMissing(t *testing.T) {
 	mc := newMockClient()
-	mc.profiles["myringa-base"] = true
-	// myringa-docker is missing
+	mc.profiles["ring-base"] = true
+	// ring-docker is missing
 
 	// Only docker create should be called; don't fail on that.
 	// But base should not be called (set error that would catch base being called
@@ -441,8 +441,8 @@ func TestSyncProfiles_PartiallyMissing(t *testing.T) {
 	if err := provision.SyncProfiles(ctx, mc); err != nil {
 		t.Fatalf("SyncProfiles failed: %v", err)
 	}
-	if !mc.profiles["myringa-docker"] {
-		t.Error("myringa-docker should have been created")
+	if !mc.profiles["ring-docker"] {
+		t.Error("ring-docker should have been created")
 	}
 }
 
@@ -450,7 +450,7 @@ func TestSyncProfiles_PartiallyMissing(t *testing.T) {
 
 func TestBuildProfiles_NoDocker(t *testing.T) {
 	got := provision.BuildProfiles(false)
-	want := []string{"default", "myringa-base"}
+	want := []string{"default", "ring-base"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -463,7 +463,7 @@ func TestBuildProfiles_NoDocker(t *testing.T) {
 
 func TestBuildProfiles_WithDocker(t *testing.T) {
 	got := provision.BuildProfiles(true)
-	want := []string{"default", "myringa-base", "myringa-docker"}
+	want := []string{"default", "ring-base", "ring-docker"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -525,8 +525,8 @@ func TestLaunch_SyncsProfiles(t *testing.T) {
 		t.Fatalf("Launch failed: %v", err)
 	}
 
-	if !mc.profiles["myringa-base"] {
-		t.Error("myringa-base profile must be synced before launch")
+	if !mc.profiles["ring-base"] {
+		t.Error("ring-base profile must be synced before launch")
 	}
 }
 
@@ -536,10 +536,10 @@ func TestLaunch_UsesCorrectImageAlias(t *testing.T) {
 		devTools bool
 		want     string
 	}{
-		{"alpine", false, "myringa/alpine:latest"},
-		{"ubuntu", false, "myringa/ubuntu:latest"},
-		{"alpine", true, "myringa/alpine-dev:latest"},
-		{"ubuntu", true, "myringa/ubuntu-dev:latest"},
+		{"alpine", false, "ring/alpine:latest"},
+		{"ubuntu", false, "ring/ubuntu:latest"},
+		{"alpine", true, "ring/alpine-dev:latest"},
+		{"ubuntu", true, "ring/ubuntu-dev:latest"},
 	}
 
 	for _, c := range cases {
@@ -743,8 +743,8 @@ func TestLaunch_WithDocker_DockerProfileIncluded(t *testing.T) {
 		t.Fatalf("Launch failed: %v", err)
 	}
 
-	if !mc.profiles["myringa-docker"] {
-		t.Error("myringa-docker profile must be synced when Docker=true")
+	if !mc.profiles["ring-docker"] {
+		t.Error("ring-docker profile must be synced when Docker=true")
 	}
 }
 

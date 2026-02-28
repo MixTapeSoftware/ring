@@ -8,8 +8,8 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"myringa/internal/format"
-	"myringa/internal/incus"
+	"ring/internal/format"
+	"ring/internal/incus"
 )
 
 // updateDetail handles key events in the detail view.
@@ -63,7 +63,7 @@ func (m Model) viewDetail() string {
 
 	// Title
 	row, _ := m.findRow(m.detailName)
-	title := TitleStyle.Render("myringa")
+	title := TitleStyle.Render("ring")
 	title += DimStyle.Render(fmt.Sprintf("  %s  %s", row.Name, row.Type))
 	s += title + "\n"
 

@@ -1,2 +1,5 @@
 [tools]
 go = "latest"
+
+[tasks.build]
+run = "CGO_ENABLED=0 go build -o ring ."

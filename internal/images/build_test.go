@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"myringa/internal/images"
+	"ring/internal/images"
 )
 
 // ── Mock BuildClient ───────────────────────────────────────────────────────────
@@ -130,9 +130,9 @@ func TestUpstreamLabel_Ubuntu(t *testing.T) {
 
 func TestTargetAlias_NoDevTools(t *testing.T) {
 	cases := []struct{ distro, tag, want string }{
-		{"alpine", "latest", "myringa/alpine:latest"},
-		{"ubuntu", "latest", "myringa/ubuntu:latest"},
-		{"alpine", "v2", "myringa/alpine:v2"},
+		{"alpine", "latest", "ring/alpine:latest"},
+		{"ubuntu", "latest", "ring/ubuntu:latest"},
+		{"alpine", "v2", "ring/alpine:v2"},
 	}
 	for _, c := range cases {
 		got := images.TargetAlias(c.distro, false, c.tag)
@@ -144,8 +144,8 @@ func TestTargetAlias_NoDevTools(t *testing.T) {
 
 func TestTargetAlias_WithDevTools(t *testing.T) {
 	got := images.TargetAlias("alpine", true, "latest")
-	if got != "myringa/alpine-dev:latest" {
-		t.Errorf("got %q, want myringa/alpine-dev:latest", got)
+	if got != "ring/alpine-dev:latest" {
+		t.Errorf("got %q, want ring/alpine-dev:latest", got)
 	}
 }
 
@@ -411,10 +411,10 @@ func TestBuild_PublishesCorrectAlias(t *testing.T) {
 		tag      string
 		want     string
 	}{
-		{"alpine", false, "latest", "myringa/alpine:latest"},
-		{"ubuntu", false, "latest", "myringa/ubuntu:latest"},
-		{"alpine", true, "latest", "myringa/alpine-dev:latest"},
-		{"alpine", false, "v2", "myringa/alpine:v2"},
+		{"alpine", false, "latest", "ring/alpine:latest"},
+		{"ubuntu", false, "latest", "ring/ubuntu:latest"},
+		{"alpine", true, "latest", "ring/alpine-dev:latest"},
+		{"alpine", false, "v2", "ring/alpine:v2"},
 	}
 
 	for _, c := range cases {

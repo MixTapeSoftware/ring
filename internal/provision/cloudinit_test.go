@@ -7,7 +7,7 @@ import (
 
 	"gopkg.in/yaml.v2"
 
-	"myringa/internal/provision"
+	"ring/internal/provision"
 )
 
 // cloudInitData is a minimal struct to parse cloud-init YAML for assertions.
