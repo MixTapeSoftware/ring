@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -94,6 +95,10 @@ func (m *mockClient) CreateInstance(_ context.Context, name, image, profile stri
 	return m.actionErr
 }
 
+func (m *mockClient) GetInstanceState(_ context.Context, _ string) (string, error) {
+	return "Running", nil
+}
+
 func (m *mockClient) ProfileExists(_ context.Context, name string) (bool, error) {
 	return false, nil
 }
@@ -136,6 +141,10 @@ func (m *mockClient) AddDevice(_ context.Context, _, _ string, _ map[string]stri
 
 func (m *mockClient) ExecInstance(_ context.Context, _ string, _ []string) ([]byte, error) {
 	return nil, nil
+}
+
+func (m *mockClient) WriteFile(_ context.Context, _, _ string, _ []byte, _, _ int, _ os.FileMode) error {
+	return nil
 }
 
 // --- Test Helpers ---

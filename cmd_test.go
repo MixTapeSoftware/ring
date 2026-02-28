@@ -25,6 +25,52 @@ func TestSubcommandRoute_UnknownSubcommand(t *testing.T) {
 	}
 }
 
+func TestSubcommandRoute_EnterSubcommand(t *testing.T) {
+	cmd, args := parseArgs([]string{"ring", "enter", "mydev"})
+	if cmd != cmdEnter {
+		t.Errorf("enter subcommand: expected cmdEnter, got %v", cmd)
+	}
+	if len(args) != 1 || args[0] != "mydev" {
+		t.Errorf("enter subcommand: expected args [mydev], got %v", args)
+	}
+}
+
+func TestSubcommandRoute_EnterAlias(t *testing.T) {
+	cmd, args := parseArgs([]string{"ring", "e", "mydev"})
+	if cmd != cmdEnter {
+		t.Errorf("e alias: expected cmdEnter, got %v", cmd)
+	}
+	if len(args) != 1 || args[0] != "mydev" {
+		t.Errorf("e alias: expected args [mydev], got %v", args)
+	}
+}
+
+func TestEnterShellArgs_UserExists(t *testing.T) {
+	got := enterShellArgs("/usr/bin/incus", "mydev", "chad", true)
+	want := []string{"/usr/bin/incus", "exec", "mydev", "--", "su", "-", "chad"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d]: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestEnterShellArgs_UserMissing_FallsBackToRoot(t *testing.T) {
+	got := enterShellArgs("/usr/bin/incus", "mydev", "chad", false)
+	want := []string{"/usr/bin/incus", "exec", "mydev", "--", "/bin/zsh"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d]: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestParseLaunchFlags_Name(t *testing.T) {
 	opts, err := parseLaunchFlags([]string{"mydev"})
 	if err != nil {
@@ -44,7 +90,7 @@ func TestParseLaunchFlags_Defaults(t *testing.T) {
 		t.Errorf("default distro: got %q, want alpine", opts.Distro)
 	}
 	if opts.Sudo {
-		t.Error("default sudo: should be false")
+		t.Error("default sudo: should be false (opt-in via --enable-sudo)")
 	}
 	if opts.MountPath != "/workspace" {
 		t.Errorf("default mount path: got %q, want /workspace", opts.MountPath)
@@ -74,7 +120,7 @@ func TestParseLaunchFlags_DockerImpliesDevTools(t *testing.T) {
 	}
 }
 
-func TestParseLaunchFlags_NoSudo(t *testing.T) {
+func TestParseLaunchFlags_EnableSudo(t *testing.T) {
 	opts, err := parseLaunchFlags([]string{"mydev", "--enable-sudo"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ type Client interface {
 	AddDevice(ctx context.Context, instanceName, deviceName string, device map[string]string) error
 	StartInstance(ctx context.Context, name string) error
 	ExecInstance(ctx context.Context, name string, cmd []string) ([]byte, error)
+	WriteFile(ctx context.Context, instance, path string, content []byte, uid, gid int, mode os.FileMode) error
 }
 
 // InstanceRequest describes the parameters for creating a new instance.
@@ -165,7 +167,7 @@ func sudoGroup(distro string) string {
 
 // Launch provisions a new Incus dev container with the given opts.
 // Progress and warnings are written to out.
-// Steps: validate → sync profiles → create instance → idmap → workspace → start.
+// Steps: validate → sync profiles → create instance → idmap → workspace → start → provision user.
 func Launch(ctx context.Context, c Client, opts LaunchOpts, out io.Writer) error {
 	if err := opts.Validate(); err != nil {
 		return fmt.Errorf("invalid opts: %w", err)
@@ -173,19 +175,6 @@ func Launch(ctx context.Context, c Client, opts LaunchOpts, out io.Writer) error
 
 	if err := SyncProfiles(ctx, c); err != nil {
 		return fmt.Errorf("syncing profiles: %w", err)
-	}
-
-	cloudInit, err := RenderCloudInit(CloudInitOpts{
-		Username:  opts.Username,
-		UID:       opts.UID,
-		GID:       opts.GID,
-		Sudo:      opts.Sudo,
-		Docker:    opts.Docker,
-		DevTools:  opts.DevTools,
-		SudoGroup: sudoGroup(opts.Distro),
-	})
-	if err != nil {
-		return fmt.Errorf("rendering cloud-init: %w", err)
 	}
 
 	imageAlias := ImageAlias(opts.Distro, opts.DevTools)
@@ -198,9 +187,7 @@ func Launch(ctx context.Context, c Client, opts LaunchOpts, out io.Writer) error
 		return &ErrImageNotFound{Alias: imageAlias, Distro: opts.Distro, DevTools: opts.DevTools}
 	}
 
-	config := map[string]string{
-		"cloud-init.user-data": cloudInit,
-	}
+	config := map[string]string{}
 	if opts.Proxy != "" {
 		proxyURL := "http://" + opts.Proxy
 		config["environment.HTTP_PROXY"] = proxyURL
@@ -222,7 +209,6 @@ func Launch(ctx context.Context, c Client, opts LaunchOpts, out io.Writer) error
 		"raw.idmap": fmt.Sprintf("both %d %d", opts.UID, opts.GID),
 	})
 	if idmapErr != nil {
-		// Non-fatal: workspace files may appear owned by root inside container.
 		fmt.Fprintf(out, "WARNING: raw.idmap not supported on this host — workspace files may appear owned by root inside the container (%v)\n", idmapErr)
 	}
 
@@ -233,6 +219,10 @@ func Launch(ctx context.Context, c Client, opts LaunchOpts, out io.Writer) error
 
 	if err := c.StartInstance(ctx, opts.Name); err != nil {
 		return fmt.Errorf("starting instance: %w", err)
+	}
+
+	if err := provisionUser(ctx, c, opts); err != nil {
+		return fmt.Errorf("provisioning user: %w", err)
 	}
 
 	return nil
@@ -258,4 +248,100 @@ func DryRun(_ context.Context, opts LaunchOpts) (string, error) {
 		fmt.Fprintf(&b, "  Proxy:     %s\n", opts.Proxy)
 	}
 	return b.String(), nil
+}
+
+// provisionUser creates the dev user and configures their environment
+// synchronously after the container starts — no cloud-init required.
+func provisionUser(ctx context.Context, c Client, opts LaunchOpts) error {
+	name := opts.Name
+	u := opts.Username
+	uid := opts.UID
+	gid := opts.GID
+
+	switch opts.Distro {
+	case "alpine":
+		// Alpine's adduser validates the shell against /etc/shells; zsh isn't added automatically.
+		c.ExecInstance(ctx, name, []string{"sh", "-c", "grep -qxF /bin/zsh /etc/shells || echo /bin/zsh >> /etc/shells"})
+		// addgroup may fail if the GID already exists; that's OK — we verify the user below.
+		c.ExecInstance(ctx, name, []string{"addgroup", "-g", strconv.Itoa(gid), u})
+		if _, err := c.ExecInstance(ctx, name, []string{
+			"adduser", "-D", "-u", strconv.Itoa(uid), "-G", u, "-s", "/bin/zsh", u,
+		}); err != nil {
+			return fmt.Errorf("adduser: %w", err)
+		}
+		c.ExecInstance(ctx, name, []string{"adduser", u, sudoGroup(opts.Distro)}) // best-effort
+	default: // ubuntu
+		c.ExecInstance(ctx, name, []string{"groupadd", "-g", strconv.Itoa(gid), u}) // best-effort
+		if _, err := c.ExecInstance(ctx, name, []string{
+			"useradd", "-m", "-u", strconv.Itoa(uid), "-g", strconv.Itoa(gid), "-s", "/bin/zsh", u,
+		}); err != nil {
+			return fmt.Errorf("useradd: %w", err)
+		}
+		c.ExecInstance(ctx, name, []string{"usermod", "-aG", sudoGroup(opts.Distro), u}) // best-effort
+	}
+
+	if opts.Sudo {
+		if opts.Distro == "alpine" {
+			// Alpine uses doas, not sudo.
+			doasConf := []byte("permit nopass " + u + "\n")
+			if err := c.WriteFile(ctx, name, "/etc/doas.conf", doasConf, 0, 0, 0644); err != nil {
+				return fmt.Errorf("writing doas.conf: %w", err)
+			}
+		} else {
+			c.ExecInstance(ctx, name, []string{"mkdir", "-p", "/etc/sudoers.d"})
+			sudoLine := []byte(u + " ALL=(ALL) NOPASSWD:ALL\n")
+			if err := c.WriteFile(ctx, name, "/etc/sudoers.d/"+u, sudoLine, 0, 0, 0440); err != nil {
+				return fmt.Errorf("writing sudoers: %w", err)
+			}
+		}
+	}
+
+	zprofile := []byte("[[ -d /workspace ]] && cd /workspace\n")
+	if err := c.WriteFile(ctx, name, "/home/"+u+"/.zprofile", zprofile, uid, gid, 0644); err != nil {
+		return fmt.Errorf("writing .zprofile: %w", err)
+	}
+
+	zshrc := []byte(renderZshrc(opts))
+	if err := c.WriteFile(ctx, name, "/home/"+u+"/.zshrc", zshrc, uid, gid, 0644); err != nil {
+		return fmt.Errorf("writing .zshrc: %w", err)
+	}
+
+	// Verify the user was actually created.
+	out, _ := c.ExecInstance(ctx, name, []string{"getent", "passwd", u})
+	if len(strings.TrimSpace(string(out))) == 0 {
+		return fmt.Errorf("user %q was not created — check container logs", u)
+	}
+
+	// Run mise install best-effort (don't fail launch on mise errors).
+	c.ExecInstance(ctx, name, []string{"su", "-", u, "-c", "mise install 2>/dev/null || true"})
+
+	return nil
+}
+
+// renderZshrc returns the complete .zshrc content for the provisioned user.
+func renderZshrc(opts LaunchOpts) string {
+	var b strings.Builder
+	b.WriteString("export PATH=\"$HOME/.local/bin:$PATH\"\n")
+	b.WriteString("eval \"$(mise activate zsh)\"\n")
+	b.WriteString("export MISE_TRUSTED_CONFIG_PATHS=\"/workspace\"\n")
+	if opts.Sudo {
+		switch opts.Distro {
+		case "alpine":
+			b.WriteString("alias apk='doas apk'\n")
+		case "ubuntu":
+			b.WriteString("alias apt='sudo apt'\n")
+			b.WriteString("alias apt-get='sudo apt-get'\n")
+		}
+	}
+	if opts.DevTools {
+		b.WriteString("[[ -f ~/.oh-my-zsh/oh-my-zsh.sh ]] && {\n")
+		b.WriteString("  export ZSH=\"$HOME/.oh-my-zsh\"\n")
+		b.WriteString("  ZSH_THEME=\"dpoggi\"\n")
+		b.WriteString("  plugins=(git zsh-autosuggestions)\n")
+		b.WriteString("  source $ZSH/oh-my-zsh.sh\n")
+		b.WriteString("  PROMPT=\"%{$fg[cyan]%}[incus]%{$reset_color%} ${PROMPT}\"\n")
+		b.WriteString("}\n")
+		b.WriteString("alias f=\"fzf --preview 'bat {-1} --color=always'\"\n")
+	}
+	return b.String()
 }

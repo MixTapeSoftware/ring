@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"testing"
 
 	"ring/internal/provision"
@@ -18,6 +19,7 @@ type mockClient struct {
 	instanceConfigs  map[string]map[string]string
 	instanceDevices  map[string]map[string]map[string]string
 	startedInstances []string
+	writtenFiles     map[string][]byte
 
 	// Configurable errors
 	createProfileErr      error
@@ -25,6 +27,7 @@ type mockClient struct {
 	updateConfigErr       error
 	addDeviceErr          error
 	startErr              error
+	writeFileErr          error
 	execResults           map[string]execResult
 }
 
@@ -39,6 +42,7 @@ func newMockClient() *mockClient {
 		instanceConfigs: make(map[string]map[string]string),
 		instanceDevices: make(map[string]map[string]map[string]string),
 		execResults:     make(map[string]execResult),
+		writtenFiles:    make(map[string][]byte),
 	}
 }
 
@@ -101,11 +105,22 @@ func (m *mockClient) StartInstance(_ context.Context, name string) error {
 }
 
 func (m *mockClient) ExecInstance(_ context.Context, name string, cmd []string) ([]byte, error) {
+	if len(cmd) >= 3 && cmd[0] == "getent" && cmd[1] == "passwd" {
+		return []byte(cmd[2] + ":x:1000:1000::/home/" + cmd[2] + ":/bin/zsh\n"), nil
+	}
 	key := name + ":" + cmd[0]
 	if r, ok := m.execResults[key]; ok {
 		return r.out, r.err
 	}
 	return nil, nil
+}
+
+func (m *mockClient) WriteFile(_ context.Context, _, path string, content []byte, _, _ int, _ os.FileMode) error {
+	if m.writeFileErr != nil {
+		return m.writeFileErr
+	}
+	m.writtenFiles[path] = content
+	return nil
 }
 
 // ── Validation tests ───────────────────────────────────────────────────────────
@@ -558,27 +573,76 @@ func TestLaunch_UsesCorrectImageAlias(t *testing.T) {
 	}
 }
 
-func TestLaunch_SetsCloudInitUserData(t *testing.T) {
+func TestLaunch_WritesZprofile(t *testing.T) {
 	mc := newMockClient()
-	ctx := context.Background()
-
-	if err := provision.Launch(ctx, mc, baseOpts(), io.Discard); err != nil {
+	if err := provision.Launch(context.Background(), mc, baseOpts(), io.Discard); err != nil {
 		t.Fatalf("Launch failed: %v", err)
 	}
+	content, ok := mc.writtenFiles["/home/chad/.zprofile"]
+	if !ok {
+		t.Fatal(".zprofile was not written")
+	}
+	if !containsStr(string(content), "/workspace") {
+		t.Errorf(".zprofile must cd to /workspace, got: %s", content)
+	}
+}
 
-	cfg := mc.instanceConfigs["mydev"]
-	if cfg == nil {
-		t.Fatal("no config for mydev")
+func TestLaunch_WritesZshrc(t *testing.T) {
+	mc := newMockClient()
+	if err := provision.Launch(context.Background(), mc, baseOpts(), io.Discard); err != nil {
+		t.Fatalf("Launch failed: %v", err)
 	}
-	if _, ok := cfg["cloud-init.user-data"]; !ok {
-		t.Error("cloud-init.user-data must be set on the instance")
+	content, ok := mc.writtenFiles["/home/chad/.zshrc"]
+	if !ok {
+		t.Fatal(".zshrc was not written")
 	}
-	userData := cfg["cloud-init.user-data"]
-	if userData == "" {
-		t.Error("cloud-init.user-data must not be empty")
+	if !containsStr(string(content), "mise activate zsh") {
+		t.Errorf(".zshrc must activate mise, got: %s", content)
 	}
-	if !containsStr(userData, "#cloud-config") {
-		t.Error("cloud-init.user-data must start with #cloud-config")
+}
+
+func TestLaunch_WritesSudoersWhenSudoEnabled(t *testing.T) {
+	// Alpine uses doas; Ubuntu uses sudoers.
+	cases := []struct {
+		distro   string
+		wantPath string
+		wantStr  string
+	}{
+		{"alpine", "/etc/doas.conf", "permit nopass"},
+		{"ubuntu", "/etc/sudoers.d/chad", "NOPASSWD"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.distro, func(t *testing.T) {
+			mc := newMockClient()
+			opts := baseOpts()
+			opts.Distro = tc.distro
+			opts.Sudo = true
+			if err := provision.Launch(context.Background(), mc, opts, io.Discard); err != nil {
+				t.Fatalf("Launch failed: %v", err)
+			}
+			content, ok := mc.writtenFiles[tc.wantPath]
+			if !ok {
+				t.Fatalf("privilege config %q was not written when Sudo=true", tc.wantPath)
+			}
+			if !containsStr(string(content), tc.wantStr) {
+				t.Errorf("expected %q in %s, got: %s", tc.wantStr, tc.wantPath, content)
+			}
+		})
+	}
+}
+
+func TestLaunch_NoSudoers_WhenSudoDisabled(t *testing.T) {
+	mc := newMockClient()
+	opts := baseOpts()
+	opts.Sudo = false
+	if err := provision.Launch(context.Background(), mc, opts, io.Discard); err != nil {
+		t.Fatalf("Launch failed: %v", err)
+	}
+	if _, ok := mc.writtenFiles["/etc/doas.conf"]; ok {
+		t.Error("doas.conf must not be written when Sudo=false")
+	}
+	if _, ok := mc.writtenFiles["/etc/sudoers.d/chad"]; ok {
+		t.Error("sudoers file must not be written when Sudo=false")
 	}
 }
 

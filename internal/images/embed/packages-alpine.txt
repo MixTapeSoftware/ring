@@ -33,4 +33,5 @@ wget
 yaml-dev
 zlib-dev
 zlib1g-dev
+doas
 zsh

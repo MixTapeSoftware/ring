@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/user"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lxc/incus/v6/shared/api"
@@ -26,6 +29,7 @@ const (
 	cmdTUI         command = iota
 	cmdLaunch      command = iota
 	cmdImagesBuild command = iota
+	cmdEnter       command = iota
 	cmdUnknown     command = iota
 )
 
@@ -38,8 +42,10 @@ func main() {
 		runLaunch(args)
 	case cmdImagesBuild:
 		runImagesBuild(args)
+	case cmdEnter:
+		runEnter(args)
 	case cmdUnknown:
-		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\nUsage:\n  ring TUI dashboard\n  ring launch (or \"l\") <name>       create a dev container\n  ring images build <distro>  build a custom image\n", args[0])
+		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\nUsage:\n  ring                              TUI dashboard\n  ring launch (or \"l\") <name>       create a dev container\n  ring enter (or \"e\") <name>        shell into a container (starts if stopped)\n  ring images build <distro>        build a custom image\n", args[0])
 		os.Exit(1)
 	}
 }
@@ -105,6 +111,8 @@ func parseArgs(args []string) (command, []string) {
 		return cmdLaunch, args[2:]
 	case "l":
 		return cmdLaunch, args[2:]
+	case "enter", "e":
+		return cmdEnter, args[2:]
 	case "images":
 		if len(args) >= 3 && args[2] == "build" {
 			return cmdImagesBuild, args[3:]
@@ -127,7 +135,7 @@ func parseLaunchFlags(args []string) (provision.LaunchOpts, error) {
 	distro := fs.String("distro", "alpine", "OS distro: alpine, ubuntu")
 	docker := fs.Bool("docker", true, "Enable Docker (implies --dev-tools)")
 	devTools := fs.Bool("dev-tools", true, "Use dev image variant (oh-my-zsh, fzf, bat, Docker packages)")
-	enableSudo := fs.Bool("enable-sudo", false, "Enable passwordless sudo")
+	enableSudo := fs.Bool("enable-sudo", false, "Grant passwordless sudo inside the container")
 	proxy := fs.String("proxy", "", "HTTP proxy host:port")
 	workspace := fs.String("workspace", "", "Host directory to mount (default: cwd)")
 	mountPath := fs.String("mount-path", "/workspace", "Container mount point")
@@ -187,7 +195,7 @@ Usage: ring launch [flags] <name>
   --distro string       OS distro: alpine, ubuntu (default "alpine")
   --docker              Enable Docker (implies --dev-tools)
   --dev-tools           Use dev image variant (oh-my-zsh, fzf, bat, Docker packages)
-  --no-sudo             Disable passwordless sudo
+  --no-sudo             Disable passwordless sudo (sudo is on by default)
   --proxy string        HTTP proxy host:port
   --workspace string    Host directory to mount (default: cwd)
   --mount-path string   Container mount point (default: /workspace)
@@ -257,6 +265,86 @@ func runImagesBuild(args []string) {
 	}
 }
 
+func runEnter(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "ring enter: container name is required")
+		fmt.Fprintln(os.Stderr, "\nUsage: ring enter <name>")
+		os.Exit(1)
+	}
+	name := args[0]
+
+	u, err := user.Current()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot determine current user:", err)
+		os.Exit(1)
+	}
+
+	c, err := incus.Connect()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot connect to Incus:", err)
+		os.Exit(1)
+	}
+
+	state, err := c.GetInstanceState(context.Background(), name)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ring enter:", err)
+		os.Exit(1)
+	}
+
+	if state != "Running" {
+		fmt.Fprintf(os.Stderr, "starting %s...\n", name)
+		if err := c.StartInstance(context.Background(), name); err != nil {
+			fmt.Fprintln(os.Stderr, "ring enter: start:", err)
+			os.Exit(1)
+		}
+	}
+
+	incusBin, err := exec.LookPath("incus")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ring enter: incus not found in PATH")
+		os.Exit(1)
+	}
+
+	// Check whether the provisioned user exists. ExecInstance doesn't surface
+	// exit codes, so we check for non-empty stdout from getent.
+	// A short poll handles the rare case where ring enter is called immediately
+	// after ring launch and the instance hasn't fully initialized yet.
+	userExists := waitForUser(context.Background(), c, name, u.Username, 5*time.Second)
+
+	argv := enterShellArgs(incusBin, name, u.Username, userExists)
+	if err := syscall.Exec(incusBin, argv, os.Environ()); err != nil {
+		fmt.Fprintln(os.Stderr, "ring enter:", err)
+		os.Exit(1)
+	}
+}
+
+// waitForUser polls getent inside the container until the named user appears
+// or the timeout is reached. Returns true if the user exists.
+func waitForUser(ctx context.Context, c incus.Client, container, username string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		out, _ := c.ExecInstance(ctx, container, []string{"getent", "passwd", username})
+		if len(strings.TrimSpace(string(out))) > 0 {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		fmt.Fprintf(os.Stderr, "waiting for user %q...\n", username)
+		time.Sleep(time.Second)
+	}
+}
+
+// enterShellArgs returns the argv for exec-ing into a container.
+// When userExists is true it opens a login shell as that user via su;
+// otherwise it falls back to a root shell.
+func enterShellArgs(incusBin, container, username string, userExists bool) []string {
+	if userExists {
+		return []string{incusBin, "exec", container, "--", "su", "-", username}
+	}
+	return []string{incusBin, "exec", container, "--", "/bin/zsh"}
+}
+
 // extractName splits args into the first non-flag arg (name) and remaining flag args.
 // This allows the container name to appear before, after, or between flags.
 func extractName(args []string) (name string, flagArgs []string) {
@@ -299,7 +387,7 @@ func isBoolFlag(arg string) bool {
 		"docker":    true,
 		"dev-tools": true,
 		"no-sudo":   true,
-		"dry-run":   true,
+		"dry-run":   true, // keep old name for extractName compatibility
 	}
 	return boolFlags[name]
 }
@@ -350,4 +438,8 @@ func (a *incusProvisionAdapter) StartInstance(ctx context.Context, name string) 
 
 func (a *incusProvisionAdapter) ExecInstance(ctx context.Context, name string, cmd []string) ([]byte, error) {
 	return a.c.ExecInstance(ctx, name, cmd)
+}
+
+func (a *incusProvisionAdapter) WriteFile(ctx context.Context, instance, path string, content []byte, uid, gid int, mode os.FileMode) error {
+	return a.c.WriteFile(ctx, instance, path, content, uid, gid, mode)
 }

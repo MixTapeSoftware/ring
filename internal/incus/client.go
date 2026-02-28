@@ -1,9 +1,11 @@
 package incus
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,6 +67,10 @@ type Client interface {
 	ListProfiles(ctx context.Context) ([]ProfileInfo, error)
 	CreateInstance(ctx context.Context, name, imageAlias, profile string) error
 
+	// GetInstanceState returns the status string ("Running", "Stopped", etc.)
+	// for the named instance.
+	GetInstanceState(ctx context.Context, name string) (string, error)
+
 	// Provisioning operations
 	ProfileExists(ctx context.Context, name string) (bool, error)
 	CreateProfile(ctx context.Context, name string, yamlData string) error
@@ -79,6 +85,7 @@ type Client interface {
 	UpdateInstanceConfig(ctx context.Context, name string, config map[string]string) error
 	AddDevice(ctx context.Context, instanceName, deviceName string, device map[string]string) error
 	ExecInstance(ctx context.Context, instanceName string, cmd []string) ([]byte, error)
+	WriteFile(ctx context.Context, instance, path string, content []byte, uid, gid int, mode os.FileMode) error
 }
 
 // client implements Client using the Incus SDK over a local Unix socket.
@@ -305,6 +312,14 @@ func (c *client) ListSnapshots(_ context.Context, instanceName string) ([]Snapsh
 	return result, nil
 }
 
+func (c *client) GetInstanceState(_ context.Context, name string) (string, error) {
+	state, _, err := c.conn.GetInstanceState(name)
+	if err != nil {
+		return "", err
+	}
+	return state.Status, nil
+}
+
 func (c *client) ProfileExists(_ context.Context, name string) (bool, error) {
 	profiles, err := c.conn.GetProfileNames()
 	if err != nil {
@@ -389,11 +404,25 @@ func (c *client) AddDevice(ctx context.Context, instanceName, deviceName string,
 	return op.WaitContext(ctx)
 }
 
+func (c *client) WriteFile(_ context.Context, instance, path string, content []byte, uid, gid int, mode os.FileMode) error {
+	args := incusclient.InstanceFileArgs{
+		Content:   bytes.NewReader(content),
+		UID:       int64(uid),
+		GID:       int64(gid),
+		Mode:      int(mode),
+		Type:      "file",
+		WriteMode: "overwrite",
+	}
+	return c.conn.CreateInstanceFile(instance, path, args)
+}
+
 func (c *client) ExecInstance(_ context.Context, instanceName string, cmd []string) ([]byte, error) {
 	var stdout, stderr strings.Builder
 	execReq := api.InstanceExecPost{
-		Command:   cmd,
-		WaitForWS: false,
+		Command:      cmd,
+		WaitForWS:    true, // required for stdout/stderr capture via websocket
+		Interactive:  false,
+		RecordOutput: false,
 	}
 	args := incusclient.InstanceExecArgs{
 		Stdout: &stringWriter{&stdout},
@@ -405,6 +434,15 @@ func (c *client) ExecInstance(_ context.Context, instanceName string, cmd []stri
 	}
 	if err := op.Wait(); err != nil {
 		return nil, err
+	}
+	// Surface non-zero exit codes — op.Wait() succeeds even when the command fails.
+	if meta := op.Get().Metadata; meta != nil {
+		if retVal, ok := meta["return"]; ok {
+			if code, ok := retVal.(float64); ok && code != 0 {
+				combined := strings.TrimSpace(stdout.String() + stderr.String())
+				return []byte(combined), fmt.Errorf("exit %d: %s", int(code), combined)
+			}
+		}
 	}
 	return []byte(stdout.String()), nil
 }
@@ -479,7 +517,7 @@ func isNotFound(err error) bool {
 	return strings.Contains(s, "not found") || strings.Contains(s, "404")
 }
 
-// parseProfileYAML parses a myringa profile YAML into an api.ProfilePut.
+// parseProfileYAML parses a ring profile YAML into an api.ProfilePut.
 // Our YAML format mirrors the Incus profile format: config: {} and devices: {}.
 func parseProfileYAML(data string, out *api.ProfilePut) error {
 	// Use gopkg.in/yaml.v2 compatible intermediate struct.

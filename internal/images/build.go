@@ -139,7 +139,24 @@ func Build(ctx context.Context, c BuildClient, opts BuildOpts, out io.Writer) er
 		return fmt.Errorf("installing packages: %w", err)
 	}
 
-	// Step 3: Install mise.
+	// Step 3: Enable cloud-init services (Alpine only — Ubuntu enables them via systemd on install).
+	if opts.Distro == "alpine" {
+		fmt.Fprintf(out, "Enabling cloud-init services...\n")
+		// cloud-init-local must be in sysinit; the rest run in default.
+		cloudInitSvcs := []struct{ svc, runlevel string }{
+			{"cloud-init-local", "sysinit"},
+			{"cloud-init", "default"},
+			{"cloud-config", "default"},
+			{"cloud-final", "default"},
+		}
+		for _, s := range cloudInitSvcs {
+			if err := c.ExecStream(ctx, builder, []string{"rc-update", "add", s.svc, s.runlevel}, out, out); err != nil {
+				return fmt.Errorf("enabling cloud-init service %s: %w", s.svc, err)
+			}
+		}
+	}
+
+	// Step 4: Install mise.
 	fmt.Fprintf(out, "Installing mise...\n")
 	if err := c.ExecStream(ctx, builder, []string{"sh", "-c",
 		"curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
