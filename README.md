@@ -8,19 +8,11 @@ A terminal dashboard and provisioning CLI for [Incus](https://linuxcontainers.or
 
 - **TUI dashboard** — live table of containers and VMs: CPU (% of allocated capacity), memory, state
 - **`launch`** — one command to create a fully configured dev container: user account, sudo, workspace mount, proxy, Docker, dev tools
-- **`images build`** — build custom myringa images locally from upstream Alpine or Ubuntu
+- **`images build`** — build custom ring images locally from upstream Alpine or Ubuntu
 
 ## Why
 
-Incus is a powerful system container and VM manager, but its surface area is large. Most of that surface area isn't relevant if your goal is local development — you just want isolated environments that feel like real machines, start fast, and stay out of your way.
-
-myringa narrows Incus down to that use case:
-
-- **One command to launch a dev container.** No fiddling with profiles, cloud-init, idmaps, or bind mounts. `myringa launch mydev` handles all of it.
-- **Opinionated images.** Custom Alpine and Ubuntu images with zsh, mise, and optional dev tools baked in — built locally, no registry required.
-- **A TUI that shows what matters.** Incus has a CLI but no live dashboard. myringa gives you a table of your containers with CPU, memory, disk, and IP at a glance, plus controls for the actions you actually use day-to-day.
-
-If you need the full power of Incus — clustering, storage pools, network ACLs, VMs — use `incus` directly. myringa is for the common case.
+Incus is a powerful system with a lot of features. Myringa is a subset of that functionality shaped to support secure local development with incus.
 
 ## Requirements
 
@@ -30,7 +22,7 @@ If you need the full power of Incus — clustering, storage pools, network ACLs,
 ## Install
 
 ```sh
-go build -o myringa .
+go build -o ring .
 ```
 
 Or install directly:
@@ -42,7 +34,7 @@ go install .
 ## TUI dashboard
 
 ```sh
-myringa
+ring
 ```
 
 Displays a live table of all Incus instances. Refreshes every 2 seconds.
@@ -79,7 +71,7 @@ Confirm prompts (`y` / `n` or `Esc`) appear before destructive actions. Snapshot
 
 CPU is shown as a percentage of the container's total allocated capacity (e.g. a container with `limits.cpu: 4` at full single-core load shows 25%).
 
-## myringa launch
+## ring launch
 
 Creates a new Incus dev container with:
 
@@ -87,12 +79,12 @@ Creates a new Incus dev container with:
 - `/bin/zsh` as the default shell with `mise` activated
 - Your current working directory (or `--workspace`) bind-mounted at `/workspace` (or `--mount-path`)
 - UID/GID mapping so workspace files aren't owned by root inside the container
-- Passwordless sudo (disable with `--no-sudo`)
+- Optional passwordless privilege escalation (`--enable-sudo`; uses `doas` on Alpine, `sudo` on Ubuntu)
 - Optional Docker-in-Incus support
 - Optional dev tools (oh-my-zsh, fzf, bat, zsh-autosuggestions, Docker packages)
 
 ```sh
-myringa launch <name> [flags]
+ring launch <name> [flags]
 ```
 
 ### Flags
@@ -100,9 +92,9 @@ myringa launch <name> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--distro` | `alpine` | OS distro: `alpine` or `ubuntu` |
-| `--dev-tools` | off | Dev image variant: oh-my-zsh, fzf, bat, Docker packages |
-| `--docker` | off | Enable Docker (implies `--dev-tools`) |
-| `--no-sudo` | off | Disable passwordless sudo |
+| `--dev-tools` | on | Dev image variant: oh-my-zsh, fzf, bat, Docker packages |
+| `--docker` | on | Enable Docker (implies `--dev-tools`) |
+| `--enable-sudo` | off | Passwordless privilege escalation (`doas` on Alpine, `sudo` on Ubuntu) |
 | `--proxy` | — | HTTP proxy as `host:port` (sets `HTTP_PROXY` / `HTTPS_PROXY`) |
 | `--workspace` | cwd | Host directory to bind-mount |
 | `--mount-path` | `/workspace` | Container mount point |
@@ -112,30 +104,30 @@ myringa launch <name> [flags]
 
 ```sh
 # Minimal Alpine container
-myringa launch mydev
+ring launch mydev
 
 # Ubuntu with Docker support
-myringa launch mydev --distro ubuntu --docker
+ring launch mydev --distro ubuntu --docker
 
 # Alpine dev container with a specific workspace
-myringa launch mydev --dev-tools --workspace ~/projects/myapp
+ring launch mydev --dev-tools --workspace ~/projects/myapp
 
 # Preview what would be created
-myringa launch mydev --distro ubuntu --docker --dry-run
+ring launch mydev --distro ubuntu --docker --dry-run
 ```
 
 ### Auto-build
 
-If the required image doesn't exist locally, `myringa launch` will build it automatically before creating the container. This takes a few minutes on first run. Subsequent launches are fast.
+If the required image doesn't exist locally, `ring launch` will build it automatically before creating the container. This takes a few minutes on first run. Subsequent launches are fast.
 
 You can also build images explicitly:
 
-## myringa images build
+## ring images build
 
-Builds a myringa custom image and publishes it to the local Incus image store. If an image with the same alias already exists it is replaced.
+Builds a ring custom image and publishes it to the local Incus image store. If an image with the same alias already exists it is replaced.
 
 ```sh
-myringa images build <distro> [flags]
+ring images build <distro> [flags]
 ```
 
 ### Flags
@@ -149,20 +141,20 @@ myringa images build <distro> [flags]
 
 ```sh
 # Build the base Alpine image
-myringa images build alpine
+ring images build alpine
 
 # Build the Alpine dev variant
-myringa images build alpine --dev
+ring images build alpine --dev
 
 # Build Ubuntu with a custom tag
-myringa images build ubuntu --tag 2025-02
+ring images build ubuntu --tag 2025-02
 ```
 
 ### What gets built
 
 Base images (`alpine`, `ubuntu`):
 
-- Base OS packages (curl, git, zsh, ca-certificates, cloud-init, etc.)
+- Base OS packages (curl, git, zsh, doas/sudo, ca-certificates, etc.)
 - [mise](https://mise.jdx.dev/) at `/usr/local/bin/mise` for runtime version management
 - `/etc/skel` configured with `.zshrc` (mise activated)
 
@@ -176,17 +168,17 @@ Dev images (`alpine-dev`, `ubuntu-dev`) additionally include:
 
 | Distro | Variant | Alias |
 |--------|---------|-------|
-| Alpine | base | `myringa/alpine:latest` |
-| Alpine | dev | `myringa/alpine-dev:latest` |
-| Ubuntu | base | `myringa/ubuntu:latest` |
-| Ubuntu | dev | `myringa/ubuntu-dev:latest` |
+| Alpine | base | `ring/alpine:latest` |
+| Alpine | dev | `ring/alpine-dev:latest` |
+| Ubuntu | base | `ring/ubuntu:latest` |
+| Ubuntu | dev | `ring/ubuntu-dev:latest` |
 
 ## Incus profiles
 
-Two profiles are created automatically on first launch and shared across all myringa containers:
+Two profiles are created automatically on first launch and shared across all ring containers:
 
-- **`myringa-base`** — CPU/memory limits, 20 GiB root disk
-- **`myringa-docker`** — security nesting + AppArmor unconfined (required for Docker-in-Incus)
+- **`ring-base`** — CPU/memory limits, 20 GiB root disk
+- **`ring-docker`** — security nesting + AppArmor unconfined (required for Docker-in-Incus)
 
 ## Development
 
