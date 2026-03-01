@@ -1,18 +1,23 @@
 # ring
 
-Built with [Claude Code](https://claude.ai/claude-code) and Sonnet 4.6 + Opus 4.6 (Anthropic).
+Local development with [Incus](https://linuxcontainers.org/incus/)
 
-A terminal dashboard and provisioning CLI for [Incus](https://linuxcontainers.org/incus/) containers.
+Ring is a TUI and CLI wrapper around Incus to create secure local development environments with sensible defaults and a reasonably complete set of
+tools. 
+
+### Features
+* Docker/Docker Compose *inside* an isolated Incus (formerly LXC) container
+* Simplified, local development-focused API wrapper around Incus containers
+* TUI for Incus container life cycle management
+* Common dev tools included (mise, claude, fzf, bat, docker, nvim, etc)
+
+Built with [Claude Code](https://claude.ai/claude-code) and Sonnet 4.6 + Opus 4.6 (Anthropic).
 
 [![asciicast](https://asciinema.org/a/JHxpIO9BzBt7iZDS.svg)](https://asciinema.org/a/JHxpIO9BzBt7iZDS)
 
 - **TUI dashboard** — live table of containers and VMs: CPU (% of allocated capacity), memory, state
 - **`launch`** — one command to create a fully configured dev container: user account, passwordless sudo, workspace mount, oh-my-zsh, Docker, mise, claude
 - **`images build`** — build custom ring images locally from upstream Alpine or Ubuntu
-
-## Why
-
-Incus is a powerful system with a lot of features. Ring is a subset of that functionality shaped to support secure local development with incus.
 
 ## Requirements
 
