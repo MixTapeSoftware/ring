@@ -82,7 +82,7 @@ func TestEnterShellArgs_UserMissing_FallsBackToRoot(t *testing.T) {
 }
 
 func TestParseLaunchFlags_Name(t *testing.T) {
-	opts, err := parseLaunchFlags([]string{"mydev"})
+	opts, _, _, err := parseLaunchFlags([]string{"mydev"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestParseLaunchFlags_Name(t *testing.T) {
 }
 
 func TestParseLaunchFlags_Defaults(t *testing.T) {
-	opts, err := parseLaunchFlags([]string{"mydev"})
+	opts, _, _, err := parseLaunchFlags([]string{"mydev"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestParseLaunchFlags_Defaults(t *testing.T) {
 }
 
 func TestParseLaunchFlags_Ubuntu(t *testing.T) {
-	opts, err := parseLaunchFlags([]string{"mydev", "--distro", "ubuntu"})
+	opts, _, _, err := parseLaunchFlags([]string{"mydev", "--distro", "ubuntu"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestParseLaunchFlags_Ubuntu(t *testing.T) {
 }
 
 func TestParseLaunchFlags_EnableSudo(t *testing.T) {
-	opts, err := parseLaunchFlags([]string{"mydev", "--enable-sudo"})
+	opts, _, _, err := parseLaunchFlags([]string{"mydev", "--enable-sudo"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestParseLaunchFlags_EnableSudo(t *testing.T) {
 }
 
 func TestParseLaunchFlags_DryRun(t *testing.T) {
-	opts, err := parseLaunchFlags([]string{"mydev", "--dry-run"})
+	opts, _, _, err := parseLaunchFlags([]string{"mydev", "--dry-run"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,14 +138,14 @@ func TestParseLaunchFlags_DryRun(t *testing.T) {
 }
 
 func TestParseLaunchFlags_MissingName(t *testing.T) {
-	_, err := parseLaunchFlags([]string{})
+	_, _, err := parseLaunchFlags([]string{})
 	if err == nil {
 		t.Error("expected error when name is missing")
 	}
 }
 
 func TestParseLaunchFlags_Proxy(t *testing.T) {
-	opts, err := parseLaunchFlags([]string{"mydev", "--proxy", "proxy.corp.com:3128"})
+	opts, _, _, err := parseLaunchFlags([]string{"mydev", "--proxy", "proxy.corp.com:3128"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestIsBoolFlag_GHToken(t *testing.T) {
 
 func TestParseLaunchFlags_Mount_Single(t *testing.T) {
 	dir := t.TempDir()
-	opts, err := parseLaunchFlags([]string{"mydev", "--mount", dir + ":/notes"})
+	opts, _, _, err := parseLaunchFlags([]string{"mydev", "--mount", dir + ":/notes"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestParseLaunchFlags_Mount_Single(t *testing.T) {
 func TestParseLaunchFlags_Mount_Multiple(t *testing.T) {
 	dir1 := t.TempDir()
 	dir2 := t.TempDir()
-	opts, err := parseLaunchFlags([]string{"mydev", "--mount", dir1 + ":/notes", "--mount", dir2 + ":/docs"})
+	opts, _, _, err := parseLaunchFlags([]string{"mydev", "--mount", dir1 + ":/notes", "--mount", dir2 + ":/docs"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestParseLaunchFlags_Mount_Multiple(t *testing.T) {
 
 func TestParseLaunchFlags_Mount_InvalidFormat(t *testing.T) {
 	// No colon
-	_, err := parseLaunchFlags([]string{"mydev", "--mount", "/tmp/notes"})
+	_, _, err := parseLaunchFlags([]string{"mydev", "--mount", "/tmp/notes"})
 	if err == nil {
 		t.Error("expected error for mount without colon")
 	}
@@ -229,7 +229,7 @@ func TestParseLaunchFlags_Mount_InvalidFormat(t *testing.T) {
 }
 
 func TestParseLaunchFlags_CustomMountPath(t *testing.T) {
-	opts, err := parseLaunchFlags([]string{"mydev", "--mount-path", "/code"})
+	opts, _, _, err := parseLaunchFlags([]string{"mydev", "--mount-path", "/code"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

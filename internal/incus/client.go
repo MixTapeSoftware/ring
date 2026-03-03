@@ -86,6 +86,7 @@ type Client interface {
 	AddDevice(ctx context.Context, instanceName, deviceName string, device map[string]string) error
 	ExecInstance(ctx context.Context, instanceName string, cmd []string) ([]byte, error)
 	WriteFile(ctx context.Context, instance, path string, content []byte, uid, gid int, mode os.FileMode) error
+	ReadFile(ctx context.Context, instance, path string) ([]byte, error)
 }
 
 // client implements Client using the Incus SDK over a local Unix socket.
@@ -416,35 +417,64 @@ func (c *client) WriteFile(_ context.Context, instance, path string, content []b
 	return c.conn.CreateInstanceFile(instance, path, args)
 }
 
-func (c *client) ExecInstance(_ context.Context, instanceName string, cmd []string) ([]byte, error) {
-	var stdout, stderr strings.Builder
-	execReq := api.InstanceExecPost{
-		Command:      cmd,
-		WaitForWS:    true, // required for stdout/stderr capture via websocket
-		Interactive:  false,
-		RecordOutput: false,
-	}
-	args := incusclient.InstanceExecArgs{
-		Stdout: &stringWriter{&stdout},
-		Stderr: &stringWriter{&stderr},
-	}
-	op, err := c.conn.ExecInstance(instanceName, execReq, &args)
+func (c *client) ReadFile(_ context.Context, instance, path string) ([]byte, error) {
+	rc, _, err := c.conn.GetInstanceFile(instance, path)
 	if err != nil {
 		return nil, err
 	}
-	if err := op.Wait(); err != nil {
+	defer rc.Close()
+	return io.ReadAll(rc)
+}
+
+func (c *client) ExecInstance(ctx context.Context, instanceName string, cmd []string) ([]byte, error) {
+	// Capture output by redirecting to a temp file inside the container.
+	// We avoid WaitForWS (websocket-based I/O) because the Incus SDK
+	// never properly closes the stdin websocket, causing op.Wait to hang.
+	outFile := fmt.Sprintf("/tmp/.ring-exec-%d", time.Now().UnixNano())
+	wrappedCmd := []string{"sh", "-c",
+		fmt.Sprintf("(%s) >%s 2>&1; echo $? >> %s",
+			shelljoin(cmd), outFile, outFile+".rc")}
+
+	execReq := api.InstanceExecPost{
+		Command:     wrappedCmd,
+		WaitForWS:   false,
+		Interactive: false,
+	}
+	op, err := c.conn.ExecInstance(instanceName, execReq, nil)
+	if err != nil {
 		return nil, err
 	}
-	// Surface non-zero exit codes — op.Wait() succeeds even when the command fails.
-	if meta := op.Get().Metadata; meta != nil {
-		if retVal, ok := meta["return"]; ok {
-			if code, ok := retVal.(float64); ok && code != 0 {
-				combined := strings.TrimSpace(stdout.String() + stderr.String())
-				return []byte(combined), fmt.Errorf("exit %d: %s", int(code), combined)
-			}
-		}
+	if err := op.WaitContext(ctx); err != nil {
+		return nil, err
 	}
-	return []byte(stdout.String()), nil
+
+	// Read captured output.
+	output, _ := c.ReadFile(ctx, instanceName, outFile)
+
+	// Read exit code.
+	rcData, _ := c.ReadFile(ctx, instanceName, outFile+".rc")
+	rc := strings.TrimSpace(string(rcData))
+
+	// Clean up temp files (best-effort).
+	_ = c.conn.DeleteInstanceFile(instanceName, outFile)
+	_ = c.conn.DeleteInstanceFile(instanceName, outFile+".rc")
+
+	if rc != "" && rc != "0" {
+		code, _ := strconv.Atoi(rc)
+		combined := strings.TrimSpace(string(output))
+		return output, fmt.Errorf("exit %d: %s", code, combined)
+	}
+	return output, nil
+}
+
+// shelljoin produces a shell-safe command string from an argv slice.
+// Each argument is single-quoted; existing single quotes are escaped.
+func shelljoin(cmd []string) string {
+	parts := make([]string, len(cmd))
+	for i, arg := range cmd {
+		parts[i] = "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+	}
+	return strings.Join(parts, " ")
 }
 
 func (c *client) LaunchBuilder(ctx context.Context, name, server, protocol, alias string) error {
@@ -470,13 +500,14 @@ func (c *client) LaunchBuilder(ctx context.Context, name, server, protocol, alia
 	return c.StartInstance(ctx, name)
 }
 
-func (c *client) ExecStream(_ context.Context, name string, cmd []string, stdout, stderr io.Writer) error {
+func (c *client) ExecStream(ctx context.Context, name string, cmd []string, stdout, stderr io.Writer) error {
 	req := api.InstanceExecPost{
 		Command:     cmd,
 		WaitForWS:   true, // required to connect I/O and receive exit code
 		Interactive: false,
 	}
 	args := &incusclient.InstanceExecArgs{
+		Stdin:  nil,
 		Stdout: stdout,
 		Stderr: stderr,
 	}
@@ -484,7 +515,7 @@ func (c *client) ExecStream(_ context.Context, name string, cmd []string, stdout
 	if err != nil {
 		return err
 	}
-	if err := op.Wait(); err != nil {
+	if err := op.WaitContext(ctx); err != nil {
 		return err
 	}
 	// op.Wait() succeeds even when the command exits non-zero; check metadata.

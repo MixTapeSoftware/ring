@@ -147,6 +147,10 @@ func (m *mockClient) WriteFile(_ context.Context, _, _ string, _ []byte, _, _ in
 	return nil
 }
 
+func (m *mockClient) ReadFile(_ context.Context, _, _ string) ([]byte, error) {
+	return nil, nil
+}
+
 // --- Test Helpers ---
 
 func testModel(mc *mockClient) Model {

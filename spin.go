@@ -58,7 +58,7 @@ func (s *Spinner) run() {
 		case <-tick.C:
 			s.mu.Lock()
 			if s.live {
-				fmt.Fprintf(s.out, "\r%s %s", spinFrames[i%len(spinFrames)], s.msg)
+				fmt.Fprintf(s.out, "\r\033[K%s %s", spinFrames[i%len(spinFrames)], s.msg)
 			}
 			s.mu.Unlock()
 		}
@@ -100,6 +100,30 @@ func (s *Spinner) Stop() {
 	s.clear()
 }
 
+// Update changes the spinner message without stopping the animation.
+func (s *Spinner) Update(msg string) {
+	if !s.isTTY {
+		return
+	}
+	s.mu.Lock()
+	s.msg = msg
+	s.mu.Unlock()
+}
+
 func (s *Spinner) clear() {
-	fmt.Fprintf(s.out, "\r%s\r", strings.Repeat(" ", 60))
+	fmt.Fprintf(s.out, "\r\033[K")
+}
+
+// spinnerWriter implements io.Writer by updating the spinner message.
+// Used to bridge provisioning progress output into the spinner display.
+type spinnerWriter struct {
+	spin *Spinner
+}
+
+func (w *spinnerWriter) Write(p []byte) (int, error) {
+	msg := strings.TrimSpace(string(p))
+	if msg != "" {
+		w.spin.Update(msg)
+	}
+	return len(p), nil
 }

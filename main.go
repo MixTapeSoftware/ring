@@ -66,7 +66,7 @@ func runTUI() {
 }
 
 func runLaunch(args []string) {
-	opts, err := parseLaunchFlags(args)
+	opts, verbose, err := parseLaunchFlags(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ring launch:", err)
 		fmt.Fprint(os.Stderr, launchUsage)
@@ -92,8 +92,17 @@ func runLaunch(args []string) {
 	spin := NewSpinner(os.Stderr, isTTY(os.Stderr))
 	spin.Start("Launching " + opts.Name + "...")
 
+	// Progress writer: in verbose mode, write step messages to stderr;
+	// otherwise, update the spinner message inline.
+	var progressOut io.Writer
+	if verbose {
+		progressOut = os.Stderr
+	} else {
+		progressOut = &spinnerWriter{spin: spin}
+	}
+
 	client := &incusProvisionAdapter{c: c}
-	if err := launchWithAutoBuild(context.Background(), c, client, opts, spin); err != nil {
+	if err := launchWithAutoBuild(context.Background(), c, client, opts, spin, progressOut); err != nil {
 		spin.Stop()
 		fmt.Fprintln(os.Stderr, "ring launch:", err)
 		os.Exit(1)
@@ -136,7 +145,7 @@ type stringSlice []string
 func (s *stringSlice) String() string { return strings.Join(*s, ", ") }
 func (s *stringSlice) Set(v string) error { *s = append(*s, v); return nil }
 
-func parseLaunchFlags(args []string) (provision.LaunchOpts, error) {
+func parseLaunchFlags(args []string) (provision.LaunchOpts, bool, error) {
 	// Separate the container name (first non-flag arg) from flag args so that
 	// flag.Parse sees only flags, regardless of where the name appears.
 	name, flagArgs := extractName(args)
@@ -150,15 +159,16 @@ func parseLaunchFlags(args []string) (provision.LaunchOpts, error) {
 	mountPath := fs.String("mount-path", "/workspace", "Container mount point")
 	dryRun := fs.Bool("dry-run", false, "Show what would be done without making changes")
 	ghToken := fs.Bool("gh-token", false, "Configure GitHub CLI + git auth (prompts for PAT and git identity)")
+	verbose := fs.Bool("v", false, "Verbose: show step-by-step progress on stderr")
 	var mounts stringSlice
 	fs.Var(&mounts, "mount", "/host/path:/container/path (repeatable)")
 
 	if err := fs.Parse(flagArgs); err != nil {
-		return provision.LaunchOpts{}, err
+		return provision.LaunchOpts{}, false, err
 	}
 
 	if name == "" {
-		return provision.LaunchOpts{}, fmt.Errorf("container name is required")
+		return provision.LaunchOpts{}, false, fmt.Errorf("container name is required")
 	}
 
 	// Default workspace to cwd.
@@ -166,7 +176,7 @@ func parseLaunchFlags(args []string) (provision.LaunchOpts, error) {
 	if ws == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return provision.LaunchOpts{}, fmt.Errorf("getting cwd: %w", err)
+			return provision.LaunchOpts{}, false, fmt.Errorf("getting cwd: %w", err)
 		}
 		ws = cwd
 	}
@@ -176,16 +186,16 @@ func parseLaunchFlags(args []string) (provision.LaunchOpts, error) {
 	for _, raw := range mounts {
 		parts := strings.SplitN(raw, ":", 2)
 		if len(parts) != 2 {
-			return provision.LaunchOpts{}, fmt.Errorf("--mount %q: expected /host/path:/container/path", raw)
+			return provision.LaunchOpts{}, false, fmt.Errorf("--mount %q: expected /host/path:/container/path", raw)
 		}
 		hostPath, containerPath := parts[0], parts[1]
 		if !strings.HasPrefix(hostPath, "/") || !strings.HasPrefix(containerPath, "/") {
-			return provision.LaunchOpts{}, fmt.Errorf("--mount %q: both paths must be absolute", raw)
+			return provision.LaunchOpts{}, false, fmt.Errorf("--mount %q: both paths must be absolute", raw)
 		}
 		if info, err := os.Stat(hostPath); err != nil {
-			return provision.LaunchOpts{}, fmt.Errorf("--mount %q: host path does not exist: %w", raw, err)
+			return provision.LaunchOpts{}, false, fmt.Errorf("--mount %q: host path does not exist: %w", raw, err)
 		} else if !info.IsDir() {
-			return provision.LaunchOpts{}, fmt.Errorf("--mount %q: host path is not a directory", raw)
+			return provision.LaunchOpts{}, false, fmt.Errorf("--mount %q: host path is not a directory", raw)
 		}
 		extraMounts = append(extraMounts, provision.MountSpec{
 			HostPath:      hostPath,
@@ -196,7 +206,7 @@ func parseLaunchFlags(args []string) (provision.LaunchOpts, error) {
 	// Default username/UID/GID from current user.
 	u, err := user.Current()
 	if err != nil {
-		return provision.LaunchOpts{}, fmt.Errorf("getting current user: %w", err)
+		return provision.LaunchOpts{}, false, fmt.Errorf("getting current user: %w", err)
 	}
 	uid, _ := strconv.Atoi(u.Uid)
 	gid, _ := strconv.Atoi(u.Gid)
@@ -219,14 +229,14 @@ func parseLaunchFlags(args []string) (provision.LaunchOpts, error) {
 	if *ghToken {
 		creds, err := promptGHCredentials()
 		if err != nil {
-			return provision.LaunchOpts{}, err
+			return provision.LaunchOpts{}, false, err
 		}
 		opts.GHToken = creds.token
 		opts.GHUserName = creds.name
 		opts.GHUserEmail = creds.email
 	}
 
-	return opts, nil
+	return opts, *verbose, nil
 }
 
 const launchUsage = `
@@ -240,6 +250,7 @@ Usage: ring launch [flags] <name>
   --mount string        Extra bind mount /host/path:/container/path (repeatable)
   --gh-token            Configure GitHub CLI + git auth (prompts for PAT and git identity)
   --dry-run             Show what would be done
+  -v                    Verbose: show step-by-step progress on stderr
 
 Examples:
   ring launch mydev
@@ -250,8 +261,8 @@ Examples:
 
 // launchWithAutoBuild calls provision.Launch and, if the required image is missing,
 // automatically builds it then retries — no separate command needed.
-func launchWithAutoBuild(ctx context.Context, c incus.Client, client *incusProvisionAdapter, opts provision.LaunchOpts, spin *Spinner) error {
-	err := provision.Launch(ctx, client, opts, io.Discard)
+func launchWithAutoBuild(ctx context.Context, c incus.Client, client *incusProvisionAdapter, opts provision.LaunchOpts, spin *Spinner, progressOut io.Writer) error {
+	err := provision.Launch(ctx, client, opts, progressOut)
 	if err == nil {
 		return nil
 	}
@@ -269,7 +280,7 @@ func launchWithAutoBuild(ctx context.Context, c incus.Client, client *incusProvi
 	}
 	fmt.Println()
 	spin.Resume("Launching " + opts.Name + "...")
-	return provision.Launch(ctx, client, opts, io.Discard)
+	return provision.Launch(ctx, client, opts, progressOut)
 }
 
 func runImagesBuild(args []string) {
@@ -436,6 +447,7 @@ func isBoolFlag(arg string) bool {
 		"enable-sudo": true,
 		"dry-run":     true,
 		"gh-token":    true,
+		"v":           true,
 	}
 	return boolFlags[name]
 }
@@ -542,3 +554,4 @@ func (a *incusProvisionAdapter) ExecInstance(ctx context.Context, name string, c
 func (a *incusProvisionAdapter) WriteFile(ctx context.Context, instance, path string, content []byte, uid, gid int, mode os.FileMode) error {
 	return a.c.WriteFile(ctx, instance, path, content, uid, gid, mode)
 }
+

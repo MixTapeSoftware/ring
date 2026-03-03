@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 //go:embed embed/profiles
@@ -203,6 +204,7 @@ func Launch(ctx context.Context, c Client, opts LaunchOpts, out io.Writer) error
 		return fmt.Errorf("invalid opts: %w", err)
 	}
 
+	fmt.Fprintf(out, "Syncing profiles...\n")
 	if err := SyncProfiles(ctx, c); err != nil {
 		return fmt.Errorf("syncing profiles: %w", err)
 	}
@@ -228,6 +230,7 @@ func Launch(ctx context.Context, c Client, opts LaunchOpts, out io.Writer) error
 		config["environment.GITHUB_TOKEN"] = opts.GHToken
 	}
 
+	fmt.Fprintf(out, "Creating instance %s...\n", opts.Name)
 	req := InstanceRequest{
 		Name:       opts.Name,
 		ImageAlias: imageAlias,
@@ -238,6 +241,7 @@ func Launch(ctx context.Context, c Client, opts LaunchOpts, out io.Writer) error
 		return fmt.Errorf("creating instance: %w", err)
 	}
 
+	fmt.Fprintf(out, "Configuring mounts...\n")
 	// Workspace mount strategy (try best option, degrade gracefully):
 	//   1. shift=true  — kernel idmapped mounts (Linux 5.12+); cleanest, no subuid/subgid needed.
 	//   2. raw.idmap   — AddDevice succeeds but StartInstance may still fail on older kernels.
@@ -268,6 +272,7 @@ func Launch(ctx context.Context, c Client, opts LaunchOpts, out io.Writer) error
 		}
 	}
 
+	fmt.Fprintf(out, "Starting instance...\n")
 	if err := c.StartInstance(ctx, opts.Name); err != nil {
 		if strings.Contains(err.Error(), "idmap") {
 			// Kernel doesn't support idmapped mounts. Fall back to a privileged container:
@@ -287,11 +292,13 @@ func Launch(ctx context.Context, c Client, opts LaunchOpts, out io.Writer) error
 		}
 	}
 
-	if err := provisionUser(ctx, c, opts); err != nil {
+	fmt.Fprintf(out, "Provisioning user %s...\n", opts.Username)
+	if err := provisionUser(ctx, c, opts, out); err != nil {
 		return fmt.Errorf("provisioning user: %w", err)
 	}
 
 	if opts.GHToken != "" {
+		fmt.Fprintf(out, "Configuring GitHub auth...\n")
 		if err := configureGitHub(ctx, c, opts); err != nil {
 			return fmt.Errorf("configuring GitHub auth: %w", err)
 		}
@@ -328,45 +335,55 @@ func DryRun(_ context.Context, opts LaunchOpts) (string, error) {
 	return b.String(), nil
 }
 
+// execTimeout wraps ExecInstance with a 30-second timeout so individual
+// commands can't hang the entire launch. Returns output and error.
+func execTimeout(ctx context.Context, c Client, name string, cmd []string) ([]byte, error) {
+	tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return c.ExecInstance(tctx, name, cmd)
+}
+
 // provisionUser creates the dev user and configures their environment
 // synchronously after the container starts.
-func provisionUser(ctx context.Context, c Client, opts LaunchOpts) error {
+func provisionUser(ctx context.Context, c Client, opts LaunchOpts, out io.Writer) error {
 	name := opts.Name
 	u := opts.Username
 	uid := opts.UID
 	gid := opts.GID
 
+	fmt.Fprintf(out, "Creating user %s...\n", u)
 	switch opts.Distro {
 	case "alpine":
 		// Evict any existing user/group occupying our target UID/GID.
-		c.ExecInstance(ctx, name, []string{"sh", "-c", fmt.Sprintf(
+		execTimeout(ctx, c, name, []string{"sh", "-c", fmt.Sprintf(
 			`g=$(getent group %d 2>/dev/null | cut -d: -f1); [ -n "$g" ] && [ "$g" != %q ] && delgroup "$g" 2>/dev/null; true`, gid, u)})
-		c.ExecInstance(ctx, name, []string{"sh", "-c", fmt.Sprintf(
+		execTimeout(ctx, c, name, []string{"sh", "-c", fmt.Sprintf(
 			`u=$(getent passwd %d 2>/dev/null | cut -d: -f1); [ -n "$u" ] && [ "$u" != %q ] && deluser "$u" 2>/dev/null; true`, uid, u)})
 		// Alpine's adduser validates the shell against /etc/shells; zsh isn't added automatically.
-		c.ExecInstance(ctx, name, []string{"sh", "-c", "grep -qxF /bin/zsh /etc/shells || echo /bin/zsh >> /etc/shells"})
-		c.ExecInstance(ctx, name, []string{"addgroup", "-g", strconv.Itoa(gid), u})
-		if _, err := c.ExecInstance(ctx, name, []string{
+		execTimeout(ctx, c, name, []string{"sh", "-c", "grep -qxF /bin/zsh /etc/shells || echo /bin/zsh >> /etc/shells"})
+		execTimeout(ctx, c, name, []string{"addgroup", "-g", strconv.Itoa(gid), u})
+		if _, err := execTimeout(ctx, c, name, []string{
 			"adduser", "-D", "-u", strconv.Itoa(uid), "-G", u, "-s", "/bin/zsh", u,
 		}); err != nil {
 			return fmt.Errorf("adduser: %w", err)
 		}
-		c.ExecInstance(ctx, name, []string{"adduser", u, sudoGroup(opts.Distro)}) // best-effort
+		execTimeout(ctx, c, name, []string{"adduser", u, sudoGroup(opts.Distro)}) // best-effort
 	default: // ubuntu
 		// Evict any existing user/group occupying our target UID/GID.
-		c.ExecInstance(ctx, name, []string{"sh", "-c", fmt.Sprintf(
+		execTimeout(ctx, c, name, []string{"sh", "-c", fmt.Sprintf(
 			`u=$(getent passwd %d 2>/dev/null | cut -d: -f1); [ -n "$u" ] && [ "$u" != %q ] && userdel -r "$u" 2>/dev/null; true`, uid, u)})
-		c.ExecInstance(ctx, name, []string{"sh", "-c", fmt.Sprintf(
+		execTimeout(ctx, c, name, []string{"sh", "-c", fmt.Sprintf(
 			`g=$(getent group %d 2>/dev/null | cut -d: -f1); [ -n "$g" ] && [ "$g" != %q ] && groupdel "$g" 2>/dev/null; true`, gid, u)})
-		c.ExecInstance(ctx, name, []string{"groupadd", "-g", strconv.Itoa(gid), u}) // best-effort
-		if _, err := c.ExecInstance(ctx, name, []string{
+		execTimeout(ctx, c, name, []string{"groupadd", "-g", strconv.Itoa(gid), u}) // best-effort
+		if _, err := execTimeout(ctx, c, name, []string{
 			"useradd", "-m", "-u", strconv.Itoa(uid), "-g", strconv.Itoa(gid), "-s", "/bin/zsh", u,
 		}); err != nil {
 			return fmt.Errorf("useradd: %w", err)
 		}
-		c.ExecInstance(ctx, name, []string{"usermod", "-aG", sudoGroup(opts.Distro), u}) // best-effort
+		execTimeout(ctx, c, name, []string{"usermod", "-aG", sudoGroup(opts.Distro), u}) // best-effort
 	}
 
+	fmt.Fprintf(out, "Configuring sudo/doas...\n")
 	if opts.Sudo {
 		if opts.Distro == "alpine" {
 			// Alpine uses doas, not sudo.
@@ -375,7 +392,7 @@ func provisionUser(ctx context.Context, c Client, opts LaunchOpts) error {
 				return fmt.Errorf("writing doas.conf: %w", err)
 			}
 		} else {
-			c.ExecInstance(ctx, name, []string{"mkdir", "-p", "/etc/sudoers.d"})
+			execTimeout(ctx, c, name, []string{"mkdir", "-p", "/etc/sudoers.d"})
 			sudoLine := []byte(u + " ALL=(ALL) NOPASSWD:ALL\n")
 			if err := c.WriteFile(ctx, name, "/etc/sudoers.d/"+u, sudoLine, 0, 0, 0440); err != nil {
 				return fmt.Errorf("writing sudoers: %w", err)
@@ -383,7 +400,20 @@ func provisionUser(ctx context.Context, c Client, opts LaunchOpts) error {
 		}
 	}
 
-	zprofile := []byte("export MISE_TRUSTED_CONFIG_PATHS=\"/workspace\"\n[[ -d /workspace ]] && cd /workspace\n")
+	fmt.Fprintf(out, "Writing shell config...\n")
+	var zprofileBuf strings.Builder
+	zprofileBuf.WriteString("export MISE_TRUSTED_CONFIG_PATHS=\"/workspace\"\n")
+	if opts.Distro == "alpine" {
+		// Alpine uses musl — tell mise to download prebuilt musl binaries
+		// instead of compiling from source. Environment variables override
+		// any config file and the all_compile=true Alpine default.
+		zprofileBuf.WriteString("export MISE_ALL_COMPILE=0\n")
+		zprofileBuf.WriteString("export MISE_NODE_COMPILE=0\n")
+		zprofileBuf.WriteString("export MISE_NODE_MIRROR_URL=\"https://unofficial-builds.nodejs.org/download/release/\"\n")
+		zprofileBuf.WriteString("export MISE_NODE_FLAVOR=\"musl\"\n")
+	}
+	zprofileBuf.WriteString("[[ -d /workspace ]] && cd /workspace\n")
+	zprofile := []byte(zprofileBuf.String())
 	if err := c.WriteFile(ctx, name, "/home/"+u+"/.zprofile", zprofile, uid, gid, 0644); err != nil {
 		return fmt.Errorf("writing .zprofile: %w", err)
 	}
@@ -394,13 +424,15 @@ func provisionUser(ctx context.Context, c Client, opts LaunchOpts) error {
 	}
 
 	// Verify the user was actually created.
-	out, _ := c.ExecInstance(ctx, name, []string{"getent", "passwd", u})
-	if len(strings.TrimSpace(string(out))) == 0 {
+	fmt.Fprintf(out, "Verifying user...\n")
+	getentOut, _ := execTimeout(ctx, c, name, []string{"getent", "passwd", u})
+	if len(strings.TrimSpace(string(getentOut))) == 0 {
 		return fmt.Errorf("user %q was not created — check container logs", u)
 	}
 
-	// Run mise install best-effort (don't fail launch on mise errors).
-	c.ExecInstance(ctx, name, []string{"su", "-", u, "-c", "mise install 2>/dev/null || true"})
+	// mise install is deferred to first shell login — the user's .zshrc
+	// runs `mise activate zsh` which handles on-demand installs.
+	// Alpine musl settings are in .zprofile as env vars (above).
 
 	return nil
 }
