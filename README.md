@@ -1,4 +1,6 @@
-# ring (experimental)
+# ring (experimental) - archived
+
+This project was an excuse for me to do a bit of go programming and to kick the tires on bubbletea/TUI development. I'm sticking with my [shell scripts](https://github.com/MixTapeSoftware/agent_incus) for managing Incus dev containers. I don't see enough value here to warrant the additional dependencies on my host system.
 
 Local development with [Incus](https://linuxcontainers.org/incus/)
 
